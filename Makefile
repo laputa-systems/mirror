@@ -1,0 +1,59 @@
+PREFIX ?= /usr
+MUSL_TARGET ?= x86_64-unknown-linux-musl
+DEB_ARCH ?= amd64
+
+.PHONY: all build build-frontend build-x86_64-musl deb clean
+
+all: build build-frontend
+
+build:
+	cargo build --locked
+
+build-x86_64-musl:
+	command -v cargo-zigbuild >/dev/null
+	cargo zigbuild --locked --bins --target $(MUSL_TARGET)
+
+build-frontend:
+	npm install
+	npx esbuild static/js/auth.ts static/js/settings.ts --bundle --outdir=static/js --platform=browser --target=es2020
+
+deb: build-x86_64-musl build-frontend
+	rm -rf target/deb-root
+	install -d target/deb-root/DEBIAN
+	install -d target/deb-root/usr/bin
+	install -d target/deb-root/lib/systemd/system
+	install -d target/deb-root/etc/laputa-mirror
+	install -d target/deb-root/usr/share/laputa-mirror
+	install -m 755 target/$(MUSL_TARGET)/debug/laputa-mirror target/deb-root/usr/bin/laputa-mirror
+	install -m 755 target/$(MUSL_TARGET)/debug/laputa-mirror-publish target/deb-root/usr/bin/laputa-mirror-publish
+	install -m 644 laputa-mirror.service target/deb-root/lib/systemd/system/laputa-mirror.service
+	install -m 600 laputa-mirror.env.example target/deb-root/etc/laputa-mirror/env.example
+	cp -R static target/deb-root/usr/share/laputa-mirror/
+	printf '%s\n' \
+	  'Package: laputa-mirror' \
+	  'Version: 0.1.0' \
+	  "Architecture: $(DEB_ARCH)" \
+	  'Maintainer: Laputa Systems' \
+	  'Description: Laputa package mirror' \
+	  > target/deb-root/DEBIAN/control
+	printf '%s\n' \
+	  '#!/bin/sh' \
+	  'set -e' \
+	  'if ! getent passwd laputa-mirror >/dev/null; then' \
+	  '  useradd --system --home /var/lib/laputa-mirror --shell /usr/sbin/nologin laputa-mirror' \
+	  'fi' \
+	  'install -d -o laputa-mirror -g laputa-mirror /var/lib/laputa-mirror' \
+	  'if [ ! -f /etc/laputa-mirror/env ]; then' \
+	  '  install -m 600 -o root -g root /etc/laputa-mirror/env.example /etc/laputa-mirror/env' \
+	  'fi' \
+	  'if command -v systemctl >/dev/null; then' \
+	  '  systemctl daemon-reload || true' \
+	  'fi' \
+	  > target/deb-root/DEBIAN/postinst
+	chmod 755 target/deb-root/DEBIAN/postinst
+	dpkg-deb --root-owner-group --build target/deb-root laputa-mirror_0.1.0_$(DEB_ARCH).deb
+
+clean:
+	rm -rf node_modules
+	rm -f static/js/auth.js static/js/settings.js
+	rm -rf target/deb-root

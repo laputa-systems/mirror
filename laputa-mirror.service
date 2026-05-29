@@ -1,0 +1,17 @@
+[Unit]
+Description=Laputa Package Mirror
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/laputa-mirror
+EnvironmentFile=/etc/laputa-mirror/env
+StateDirectory=laputa-mirror
+WorkingDirectory=/usr/share/laputa-mirror
+User=laputa-mirror
+Group=laputa-mirror
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target
