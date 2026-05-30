@@ -1,11 +1,15 @@
 # Laputa Mirror
 
-`laputa-mirror` serves the Laputa PM flat repository format from an S3-compatible
+`laputa-mirror` serves the Laputa PM repository format from an S3-compatible
 bucket and exposes authenticated `PUT` publishing for:
 
 - `index.json`
-- `packages/<name>/<name>-<ver>-<rel>.tar.gz`
+- `packages/<arch>/<name>/<name>-<ver>-<rel>.tar.gz`
 - `sources/<name>/<name>-<ver>-<rel>-src.tar.gz`
+
+The mirror accepts the older `packages/<name>/...` object path for existing
+arm64 packages, but new PM uploads use the arch-qualified path. Source mirrors
+stay shared across architectures.
 
 This guide stands up a new mirror at `https://laputa.17166969.xyz/` using
 Cloudflare R2 for object storage and a Cloudflare Tunnel for the only public
@@ -257,7 +261,7 @@ cargo run --bin laputa-mirror-publish -- \
 
 The publisher:
 
-1. Uploads every package tarball from `packages/`.
+1. Uploads every package tarball from `packages/<arch>/`.
 2. Maps `.out/source-mirrors/<pkg>-<ver>-<rel>.tar.gz` to
    `sources/<pkg>/<pkg>-<ver>-<rel>-src.tar.gz`.
 3. Recomputes package/source sha256 and package size metadata.
@@ -271,7 +275,7 @@ Verify:
 
 ```sh
 curl -fsSL https://laputa.17166969.xyz/index.json | jq '.[].name'
-curl -I https://laputa.17166969.xyz/packages/build-essential-native/build-essential-native-1-2.tar.gz
+curl -I https://laputa.17166969.xyz/packages/aarch64/build-essential-native/build-essential-native-1-2.tar.gz
 curl -I https://laputa.17166969.xyz/sources/linux/linux-7.0.5-5-src.tar.gz
 ```
 

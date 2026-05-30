@@ -68,7 +68,7 @@ pub fn prepare_publish(repo_dir: &Path) -> Result<PublishPlan, String> {
         }
     }
 
-    index.sort_by(|a, b| a.name.cmp(&b.name));
+    index.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.arch.cmp(&b.arch)));
     let index_json = serde_json::to_vec_pretty(&index).map_err(|e| format!("encode index: {e}"))?;
 
     Ok(PublishPlan {
@@ -213,6 +213,7 @@ mod tests {
 
     fn sample_entry() -> RemotePackage {
         RemotePackage {
+            arch: "aarch64".to_string(),
             name: "zlib".to_string(),
             ver: "1.3.2".to_string(),
             rel: "5".to_string(),
@@ -220,7 +221,7 @@ mod tests {
             mkdeps: vec!["cmake".to_string()],
             sha256: String::new(),
             size: 0,
-            tarball: "packages/zlib/zlib-1.3.2-5.tar.gz".to_string(),
+            tarball: "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz".to_string(),
             source_sha256: String::new(),
             source_tarball: String::new(),
             metapackage: false,
@@ -230,7 +231,7 @@ mod tests {
     #[test]
     fn source_mirror_maps_to_pm_source_path() {
         let dir = TestDir::new("source-map");
-        dir.write("packages/zlib/zlib-1.3.2-5.tar.gz", b"pkg");
+        dir.write("packages/aarch64/zlib/zlib-1.3.2-5.tar.gz", b"pkg");
         dir.write(".out/source-mirrors/zlib-1.3.2-5.tar.gz", b"src");
         dir.write(
             "index.json",
@@ -250,7 +251,10 @@ mod tests {
     #[test]
     fn package_checksum_and_size_are_refreshed() {
         let dir = TestDir::new("checksum");
-        dir.write("packages/zlib/zlib-1.3.2-5.tar.gz", b"package bytes");
+        dir.write(
+            "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz",
+            b"package bytes",
+        );
         dir.write(
             "index.json",
             serde_json::to_vec(&vec![sample_entry()])
@@ -266,7 +270,7 @@ mod tests {
     #[test]
     fn upload_order_puts_index_last() {
         let dir = TestDir::new("order");
-        dir.write("packages/zlib/zlib-1.3.2-5.tar.gz", b"pkg");
+        dir.write("packages/aarch64/zlib/zlib-1.3.2-5.tar.gz", b"pkg");
         dir.write(".out/source-mirrors/zlib-1.3.2-5.tar.gz", b"src");
         dir.write(
             "index.json",
@@ -279,7 +283,7 @@ mod tests {
         assert_eq!(
             plan.upload_order(),
             vec![
-                "packages/zlib/zlib-1.3.2-5.tar.gz",
+                "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz",
                 "sources/zlib/zlib-1.3.2-5-src.tar.gz",
                 "index.json",
             ]
@@ -293,7 +297,11 @@ mod tests {
         )
         .unwrap();
 
-        assert!(out.path.join("packages/zlib/zlib-1.3.2-5.tar.gz").exists());
+        assert!(
+            out.path
+                .join("packages/aarch64/zlib/zlib-1.3.2-5.tar.gz")
+                .exists()
+        );
         assert!(
             out.path
                 .join("sources/zlib/zlib-1.3.2-5-src.tar.gz")
@@ -313,6 +321,6 @@ mod tests {
         );
 
         let err = prepare_publish(&dir.path).unwrap_err();
-        assert!(err.contains("packages/zlib/zlib-1.3.2-5.tar.gz"));
+        assert!(err.contains("packages/aarch64/zlib/zlib-1.3.2-5.tar.gz"));
     }
 }

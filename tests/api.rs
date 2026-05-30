@@ -70,6 +70,7 @@ fn body_json(resp: &packages::Response) -> serde_json::Value {
 
 fn sample_index() -> Vec<packages::RemotePackage> {
     vec![packages::RemotePackage {
+        arch: "aarch64".to_string(),
         name: "zlib".to_string(),
         ver: "1.3.2".to_string(),
         rel: "5".to_string(),
@@ -77,7 +78,7 @@ fn sample_index() -> Vec<packages::RemotePackage> {
         mkdeps: vec!["cmake".to_string()],
         sha256: s3::sha256_hex(b"package"),
         size: 7,
-        tarball: "packages/zlib/zlib-1.3.2-5.tar.gz".to_string(),
+        tarball: "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz".to_string(),
         source_sha256: s3::sha256_hex(b"source"),
         source_tarball: "sources/zlib/zlib-1.3.2-5-src.tar.gz".to_string(),
         metapackage: false,
@@ -103,7 +104,7 @@ fn public_reads_return_index_and_objects() {
     state
         .s3
         .put(
-            "packages/zlib/zlib-1.3.2-5.tar.gz",
+            "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz",
             b"package".to_vec(),
             "application/octet-stream",
         )
@@ -125,7 +126,7 @@ fn public_reads_return_index_and_objects() {
 
     let resp = packages::route(
         "GET",
-        "/packages/zlib/zlib-1.3.2-5.tar.gz",
+        "/packages/aarch64/zlib/zlib-1.3.2-5.tar.gz",
         &headers(&[]),
         b"",
         &state,
@@ -149,14 +150,17 @@ fn authenticated_puts_store_objects_and_index() {
     let state = make_state();
     let resp = packages::route(
         "PUT",
-        "/packages/zlib/zlib-1.3.2-5.tar.gz",
+        "/packages/aarch64/zlib/zlib-1.3.2-5.tar.gz",
         &auth_headers(),
         b"package",
         &state,
     );
     assert_eq!(resp.status, 201);
     assert_eq!(
-        state.s3.get("packages/zlib/zlib-1.3.2-5.tar.gz").unwrap(),
+        state
+            .s3
+            .get("packages/aarch64/zlib/zlib-1.3.2-5.tar.gz")
+            .unwrap(),
         b"package"
     );
 
@@ -221,7 +225,7 @@ fn writes_require_bearer_auth() {
     let state = make_state();
     let resp = packages::route(
         "PUT",
-        "/packages/zlib/zlib-1.3.2-5.tar.gz",
+        "/packages/aarch64/zlib/zlib-1.3.2-5.tar.gz",
         &headers(&[]),
         b"package",
         &state,
@@ -263,7 +267,7 @@ fn r2_redirects_use_flat_object_paths() {
 
     let resp = packages::route(
         "GET",
-        "/packages/zlib/zlib-1.3.2-5.tar.gz",
+        "/packages/aarch64/zlib/zlib-1.3.2-5.tar.gz",
         &headers(&[]),
         b"",
         &state,
@@ -276,7 +280,7 @@ fn r2_redirects_use_flat_object_paths() {
         .map(|(_, v)| v.as_str());
     assert_eq!(
         loc,
-        Some("https://pub.example/packages/zlib/zlib-1.3.2-5.tar.gz")
+        Some("https://pub.example/packages/aarch64/zlib/zlib-1.3.2-5.tar.gz")
     );
 }
 
@@ -287,7 +291,10 @@ fn index_persists_to_storage_and_reloads() {
 
     let loaded = packages::load_index(&state.s3).unwrap();
     assert_eq!(loaded[0].name, "zlib");
-    assert_eq!(loaded[0].tarball, "packages/zlib/zlib-1.3.2-5.tar.gz");
+    assert_eq!(
+        loaded[0].tarball,
+        "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz"
+    );
 }
 
 #[test]

@@ -10,6 +10,8 @@ use crate::s3;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemotePackage {
+    #[serde(default = "default_arch")]
+    pub arch: String,
     pub name: String,
     pub ver: String,
     pub rel: String,
@@ -21,6 +23,10 @@ pub struct RemotePackage {
     pub source_sha256: String,
     pub source_tarball: String,
     pub metapackage: bool,
+}
+
+fn default_arch() -> String {
+    "aarch64".to_string()
 }
 
 pub struct Response {
@@ -367,7 +373,7 @@ fn put_index(body: &[u8], state: &AppState) -> Response {
         return Response::bad_request(&msg);
     }
 
-    index.sort_by(|a, b| a.name.cmp(&b.name));
+    index.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.arch.cmp(&b.arch)));
     let bytes = match serde_json::to_vec_pretty(&index) {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -433,7 +439,7 @@ fn root_index(headers: &HashMap<String, String>, state: &AppState) -> Response {
     } else {
         html.push_str(&format!(
             "<p class=count>{} packages</p>\
-            <table><tr><th>Package</th><th>Binary</th><th>Source</th><th>Dependencies</th><th>Build deps</th></tr>",
+            <table><tr><th>Package</th><th>Arch</th><th>Binary</th><th>Source</th><th>Dependencies</th><th>Build deps</th></tr>",
             packages.len()
         ));
 
@@ -458,8 +464,9 @@ fn root_index(headers: &HashMap<String, String>, state: &AppState) -> Response {
                 )
             };
             html.push_str(&format!(
-                "<tr><td><strong>{}</strong></td><td>{binary}</td><td>{source}</td><td>{}</td><td>{}</td></tr>",
+                "<tr><td><strong>{}</strong></td><td><span class=dep>{}</span></td><td>{binary}</td><td>{source}</td><td>{}</td><td>{}</td></tr>",
                 html_escape(&pkg.name),
+                html_escape(&pkg.arch),
                 deps_html(&pkg.deps),
                 deps_html(&pkg.mkdeps),
             ));
@@ -487,10 +494,13 @@ fn deps_html(deps: &[String]) -> String {
 
 fn package_key(path: &str) -> Option<String> {
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
-    if parts.len() != 3 || parts[0] != "packages" {
-        return None;
+    if parts.len() == 4 && parts[0] == "packages" {
+        return validate_package_object_path(parts[1], parts[2], parts[3]);
     }
-    validate_object_path(parts[0], parts[1], parts[2], false)
+    if parts.len() == 3 && parts[0] == "packages" {
+        return validate_object_path(parts[0], parts[1], parts[2], false);
+    }
+    None
 }
 
 fn source_key(path: &str) -> Option<String> {
@@ -517,14 +527,34 @@ fn validate_object_path(prefix: &str, name: &str, file: &str, source: bool) -> O
     Some(format!("{prefix}/{name}/{file}"))
 }
 
+fn validate_package_object_path(arch: &str, name: &str, file: &str) -> Option<String> {
+    if !valid_arch(arch) || !valid_pkg_name(name) || !file.ends_with(".tar.gz") {
+        return None;
+    }
+    if name.contains("..") || file.contains("..") || file.contains('/') || file.is_empty() {
+        return None;
+    }
+    if !file.starts_with(&format!("{name}-")) {
+        return None;
+    }
+    Some(format!("packages/{arch}/{name}/{file}"))
+}
+
+fn valid_arch(arch: &str) -> bool {
+    matches!(arch, "aarch64" | "x86_64")
+}
+
 fn validate_index(index: &[RemotePackage]) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
     for pkg in index {
+        if !valid_arch(&pkg.arch) {
+            return Err(format!("invalid arch for {}: {}", pkg.name, pkg.arch));
+        }
         if !valid_pkg_name(&pkg.name) {
             return Err(format!("invalid package name: {}", pkg.name));
         }
-        if !seen.insert(pkg.name.clone()) {
-            return Err(format!("duplicate package: {}", pkg.name));
+        if !seen.insert(format!("{}/{}", pkg.arch, pkg.name)) {
+            return Err(format!("duplicate package: {}/{}", pkg.arch, pkg.name));
         }
         if !pkg.sha256.is_empty() && !valid_sha256(&pkg.sha256) {
             return Err(format!("invalid sha256 for {}", pkg.name));
@@ -538,6 +568,11 @@ fn validate_index(index: &[RemotePackage]) -> Result<(), String> {
             }
         } else if package_key(&format!("/{}", pkg.tarball)).is_none() {
             return Err(format!("invalid tarball path for {}", pkg.name));
+        } else if !tarball_matches_entry(pkg) {
+            return Err(format!(
+                "tarball path does not match package arch/name for {}",
+                pkg.name
+            ));
         }
         if !pkg.source_tarball.is_empty()
             && source_key(&format!("/{}", pkg.source_tarball)).is_none()
@@ -546,6 +581,14 @@ fn validate_index(index: &[RemotePackage]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn tarball_matches_entry(pkg: &RemotePackage) -> bool {
+    let parts: Vec<&str> = pkg.tarball.split('/').collect();
+    if parts.len() == 4 {
+        return parts[0] == "packages" && parts[1] == pkg.arch && parts[2] == pkg.name;
+    }
+    parts.len() == 3 && parts[0] == "packages" && pkg.arch == "aarch64" && parts[1] == pkg.name
 }
 
 fn valid_sha256(value: &str) -> bool {
@@ -599,6 +642,10 @@ mod tests {
     #[test]
     fn object_paths_are_flat_pm_paths() {
         assert_eq!(
+            package_key("/packages/aarch64/zlib/zlib-1.3.2-5.tar.gz").as_deref(),
+            Some("packages/aarch64/zlib/zlib-1.3.2-5.tar.gz")
+        );
+        assert_eq!(
             package_key("/packages/zlib/zlib-1.3.2-5.tar.gz").as_deref(),
             Some("packages/zlib/zlib-1.3.2-5.tar.gz")
         );
@@ -618,6 +665,7 @@ mod tests {
     #[test]
     fn index_validation_checks_paths() {
         let index = vec![RemotePackage {
+            arch: "aarch64".to_string(),
             name: "zlib".to_string(),
             ver: "1.3.2".to_string(),
             rel: "5".to_string(),
@@ -625,7 +673,7 @@ mod tests {
             mkdeps: vec![],
             sha256: "a".repeat(64),
             size: 10,
-            tarball: "packages/zlib/zlib-1.3.2-5.tar.gz".to_string(),
+            tarball: "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz".to_string(),
             source_sha256: "b".repeat(64),
             source_tarball: "sources/zlib/zlib-1.3.2-5-src.tar.gz".to_string(),
             metapackage: false,
