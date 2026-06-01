@@ -20,6 +20,8 @@ pub struct RemotePackage {
     pub sha256: String,
     pub size: u64,
     pub tarball: String,
+    #[serde(default)]
+    pub metadata: String,
     pub source_sha256: String,
     pub source_tarball: String,
     pub metapackage: bool,
@@ -212,6 +214,9 @@ fn get(path: &str, headers: &HashMap<String, String>, state: &AppState) -> Respo
     if let Some(key) = source_key(path) {
         return get_object(&key, state);
     }
+    if let Some(key) = metadata_key(path) {
+        return get_object(&key, state);
+    }
     Response::not_found()
 }
 
@@ -228,7 +233,10 @@ fn put(path: &str, headers: &HashMap<String, String>, body: &[u8], state: &AppSt
         return put_upload_chunk(path, body, state);
     }
 
-    let Some(key) = package_key(path).or_else(|| source_key(path)) else {
+    let Some(key) = package_key(path)
+        .or_else(|| source_key(path))
+        .or_else(|| metadata_key(path))
+    else {
         return Response::not_found();
     };
 
@@ -293,8 +301,10 @@ fn complete_chunked_upload(
         return Response::bad_request("chunk count must be positive");
     }
 
-    let Some(key) =
-        package_key(&format!("/{}", req.rel)).or_else(|| source_key(&format!("/{}", req.rel)))
+    let rel_path = format!("/{}", req.rel);
+    let Some(key) = package_key(&rel_path)
+        .or_else(|| source_key(&rel_path))
+        .or_else(|| metadata_key(&rel_path))
     else {
         return Response::bad_request("invalid upload path");
     };
@@ -399,7 +409,12 @@ fn get_object(key: &str, state: &AppState) -> Response {
         return Response::redirect(&url);
     }
     match state.s3.get(key) {
-        Some(bytes) => Response::octet(bytes),
+        Some(bytes) => Response {
+            status: 200,
+            content_type: content_type_for(key),
+            body: bytes,
+            extra_headers: vec![],
+        },
         None => Response::not_found(),
     }
 }
@@ -511,6 +526,14 @@ fn source_key(path: &str) -> Option<String> {
     validate_object_path(parts[0], parts[1], parts[2], true)
 }
 
+fn metadata_key(path: &str) -> Option<String> {
+    let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if parts.len() != 4 || parts[0] != "metadata" {
+        return None;
+    }
+    validate_metadata_object_path(parts[1], parts[2], parts[3])
+}
+
 fn validate_object_path(prefix: &str, name: &str, file: &str, source: bool) -> Option<String> {
     if !valid_pkg_name(name) || !file.ends_with(".tar.gz") {
         return None;
@@ -538,6 +561,19 @@ fn validate_package_object_path(arch: &str, name: &str, file: &str) -> Option<St
         return None;
     }
     Some(format!("packages/{arch}/{name}/{file}"))
+}
+
+fn validate_metadata_object_path(arch: &str, name: &str, file: &str) -> Option<String> {
+    if !valid_arch(arch) || !valid_pkg_name(name) || !file.ends_with(".json") {
+        return None;
+    }
+    if name.contains("..") || file.contains("..") || file.contains('/') || file.is_empty() {
+        return None;
+    }
+    if !file.starts_with(&format!("{name}-")) {
+        return None;
+    }
+    Some(format!("metadata/{arch}/{name}/{file}"))
 }
 
 fn valid_arch(arch: &str) -> bool {
@@ -579,6 +615,17 @@ fn validate_index(index: &[RemotePackage]) -> Result<(), String> {
         {
             return Err(format!("invalid source path for {}", pkg.name));
         }
+        if !pkg.metadata.is_empty() {
+            if metadata_key(&format!("/{}", pkg.metadata)).is_none() {
+                return Err(format!("invalid metadata path for {}", pkg.name));
+            }
+            if !metadata_matches_entry(pkg) {
+                return Err(format!(
+                    "metadata path does not match package arch/name for {}",
+                    pkg.name
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -589,6 +636,11 @@ fn tarball_matches_entry(pkg: &RemotePackage) -> bool {
         return parts[0] == "packages" && parts[1] == pkg.arch && parts[2] == pkg.name;
     }
     parts.len() == 3 && parts[0] == "packages" && pkg.arch == "aarch64" && parts[1] == pkg.name
+}
+
+fn metadata_matches_entry(pkg: &RemotePackage) -> bool {
+    let parts: Vec<&str> = pkg.metadata.split('/').collect();
+    parts.len() == 4 && parts[0] == "metadata" && parts[1] == pkg.arch && parts[2] == pkg.name
 }
 
 fn valid_sha256(value: &str) -> bool {
@@ -604,7 +656,7 @@ fn valid_pkg_name(name: &str) -> bool {
 }
 
 fn content_type_for(key: &str) -> &'static str {
-    if key == "index.json" {
+    if key == "index.json" || key.starts_with("metadata/") {
         "application/json"
     } else {
         "application/octet-stream"
@@ -653,6 +705,10 @@ mod tests {
             source_key("/sources/zlib/zlib-1.3.2-5-src.tar.gz").as_deref(),
             Some("sources/zlib/zlib-1.3.2-5-src.tar.gz")
         );
+        assert_eq!(
+            metadata_key("/metadata/aarch64/zlib/zlib-1.3.2-5.json").as_deref(),
+            Some("metadata/aarch64/zlib/zlib-1.3.2-5.json")
+        );
     }
 
     #[test]
@@ -660,6 +716,9 @@ mod tests {
         assert!(package_key("/packages/zlib/../../../etc/passwd").is_none());
         assert!(package_key("/packages/../zlib/zlib-1.tar.gz").is_none());
         assert!(source_key("/sources/zlib/zlib-1.tar.gz").is_none());
+        assert!(metadata_key("/metadata/aarch64/zlib/../../../etc/passwd").is_none());
+        assert!(metadata_key("/metadata/../zlib/zlib-1.json").is_none());
+        assert!(metadata_key("/metadata/aarch64/zlib/zlib-1.tar.gz").is_none());
     }
 
     #[test]
@@ -674,6 +733,7 @@ mod tests {
             sha256: "a".repeat(64),
             size: 10,
             tarball: "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz".to_string(),
+            metadata: "metadata/aarch64/zlib/zlib-1.3.2-5.json".to_string(),
             source_sha256: "b".repeat(64),
             source_tarball: "sources/zlib/zlib-1.3.2-5-src.tar.gz".to_string(),
             metapackage: false,

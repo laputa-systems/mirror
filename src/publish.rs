@@ -49,6 +49,23 @@ pub fn prepare_publish(repo_dir: &Path) -> Result<PublishPlan, String> {
                 rel: entry.tarball.clone(),
                 path: tarball,
             });
+
+            let default_metadata = format!(
+                "metadata/{}/{}/{}-{}-{}.json",
+                entry.arch, entry.name, entry.name, entry.ver, entry.rel
+            );
+            if entry.metadata.is_empty() && repo_dir.join(&default_metadata).exists() {
+                entry.metadata = default_metadata;
+            }
+            if !entry.metadata.is_empty() {
+                let metadata = repo_dir.join(&entry.metadata);
+                std::fs::read(&metadata)
+                    .map_err(|e| format!("read {}: {e}", metadata.display()))?;
+                uploads.push(PublishUpload {
+                    rel: entry.metadata.clone(),
+                    path: metadata,
+                });
+            }
         }
 
         let mirror = repo_dir
@@ -222,6 +239,7 @@ mod tests {
             sha256: String::new(),
             size: 0,
             tarball: "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz".to_string(),
+            metadata: String::new(),
             source_sha256: String::new(),
             source_tarball: String::new(),
             metapackage: false,
@@ -271,6 +289,7 @@ mod tests {
     fn upload_order_puts_index_last() {
         let dir = TestDir::new("order");
         dir.write("packages/aarch64/zlib/zlib-1.3.2-5.tar.gz", b"pkg");
+        dir.write("metadata/aarch64/zlib/zlib-1.3.2-5.json", b"{}");
         dir.write(".out/source-mirrors/zlib-1.3.2-5.tar.gz", b"src");
         dir.write(
             "index.json",
@@ -284,6 +303,7 @@ mod tests {
             plan.upload_order(),
             vec![
                 "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz",
+                "metadata/aarch64/zlib/zlib-1.3.2-5.json",
                 "sources/zlib/zlib-1.3.2-5-src.tar.gz",
                 "index.json",
             ]
@@ -300,6 +320,11 @@ mod tests {
         assert!(
             out.path
                 .join("packages/aarch64/zlib/zlib-1.3.2-5.tar.gz")
+                .exists()
+        );
+        assert!(
+            out.path
+                .join("metadata/aarch64/zlib/zlib-1.3.2-5.json")
                 .exists()
         );
         assert!(
@@ -322,5 +347,20 @@ mod tests {
 
         let err = prepare_publish(&dir.path).unwrap_err();
         assert!(err.contains("packages/aarch64/zlib/zlib-1.3.2-5.tar.gz"));
+    }
+
+    #[test]
+    fn missing_declared_metadata_fails() {
+        let dir = TestDir::new("missing-metadata");
+        dir.write("packages/aarch64/zlib/zlib-1.3.2-5.tar.gz", b"pkg");
+        let mut entry = sample_entry();
+        entry.metadata = "metadata/aarch64/zlib/zlib-1.3.2-5.json".to_string();
+        dir.write(
+            "index.json",
+            serde_json::to_vec(&vec![entry]).unwrap().as_slice(),
+        );
+
+        let err = prepare_publish(&dir.path).unwrap_err();
+        assert!(err.contains("metadata/aarch64/zlib/zlib-1.3.2-5.json"));
     }
 }

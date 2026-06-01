@@ -5,6 +5,7 @@ bucket and exposes authenticated `PUT` publishing for:
 
 - `index.json`
 - `packages/<arch>/<name>/<name>-<ver>-<rel>.tar.gz`
+- `metadata/<arch>/<name>/<name>-<ver>-<rel>.json`
 - `sources/<name>/<name>-<ver>-<rel>-src.tar.gz`
 
 The mirror accepts the older `packages/<name>/...` object path for existing
@@ -262,10 +263,11 @@ cargo run --bin laputa-mirror-publish -- \
 The publisher:
 
 1. Uploads every package tarball from `packages/<arch>/`.
-2. Maps `.out/source-mirrors/<pkg>-<ver>-<rel>.tar.gz` to
+2. Uploads package metadata sidecars from `metadata/<arch>/`.
+3. Maps `.out/source-mirrors/<pkg>-<ver>-<rel>.tar.gz` to
    `sources/<pkg>/<pkg>-<ver>-<rel>-src.tar.gz`.
-3. Recomputes package/source sha256 and package size metadata.
-4. Uploads `index.json` last.
+4. Recomputes package/source sha256 and package size metadata.
+5. Uploads `index.json` last.
 
 Large package and source uploads are split into smaller chunk requests to avoid
 Cloudflare Tunnel request body limits. The publisher only talks to
@@ -276,6 +278,7 @@ Verify:
 ```sh
 curl -fsSL https://laputa.17166969.xyz/index.json | jq '.[].name'
 curl -I https://laputa.17166969.xyz/packages/aarch64/build-essential-native/build-essential-native-1-2.tar.gz
+curl -I https://laputa.17166969.xyz/metadata/aarch64/build-essential-native/build-essential-native-1-2.json
 curl -I https://laputa.17166969.xyz/sources/linux/linux-7.0.5-5-src.tar.gz
 ```
 
@@ -314,7 +317,7 @@ For uploads from local PM tooling, use:
 
 ```sh
 export XSH_PM_REPO=https://laputa.17166969.xyz
-export XSH_PM_TOKEN=<token_from_settings>
+export LAPUTA_TOKEN=<token_from_settings>
 ```
 
 ## Operations

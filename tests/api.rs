@@ -79,6 +79,7 @@ fn sample_index() -> Vec<packages::RemotePackage> {
         sha256: s3::sha256_hex(b"package"),
         size: 7,
         tarball: "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz".to_string(),
+        metadata: String::new(),
         source_sha256: s3::sha256_hex(b"source"),
         source_tarball: "sources/zlib/zlib-1.3.2-5-src.tar.gz".to_string(),
         metapackage: false,
@@ -117,6 +118,14 @@ fn public_reads_return_index_and_objects() {
             "application/octet-stream",
         )
         .unwrap();
+    state
+        .s3
+        .put(
+            "metadata/aarch64/zlib/zlib-1.3.2-5.json",
+            br#"{"metadata_sha256":"abc"}"#.to_vec(),
+            "application/json",
+        )
+        .unwrap();
     assert_eq!(put_index(&state, &sample_index()).status, 201);
 
     let resp = packages::route("GET", "/index.json", &headers(&[]), b"", &state);
@@ -143,6 +152,17 @@ fn public_reads_return_index_and_objects() {
     );
     assert_eq!(resp.status, 200);
     assert_eq!(resp.body, b"source");
+
+    let resp = packages::route(
+        "GET",
+        "/metadata/aarch64/zlib/zlib-1.3.2-5.json",
+        &headers(&[]),
+        b"",
+        &state,
+    );
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.content_type, "application/json");
+    assert_eq!(resp.body, br#"{"metadata_sha256":"abc"}"#);
 }
 
 #[test]
@@ -172,6 +192,22 @@ fn authenticated_puts_store_objects_and_index() {
         &state,
     );
     assert_eq!(resp.status, 201);
+
+    let resp = packages::route(
+        "PUT",
+        "/metadata/aarch64/zlib/zlib-1.3.2-5.json",
+        &auth_headers(),
+        br#"{"metadata_sha256":"abc"}"#,
+        &state,
+    );
+    assert_eq!(resp.status, 201);
+    assert_eq!(
+        state
+            .s3
+            .get("metadata/aarch64/zlib/zlib-1.3.2-5.json")
+            .unwrap(),
+        br#"{"metadata_sha256":"abc"}"#
+    );
 
     let resp = put_index(&state, &sample_index());
     assert_eq!(resp.status, 201);
