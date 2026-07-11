@@ -109,16 +109,6 @@ fn main() {
                 }
             }
 
-            if url == "/index.json" && resp.status == 200 {
-                let cc = tiny_http::Header::from_bytes(
-                    &b"Cache-Control"[..],
-                    &b"public, max-age=60"[..],
-                )
-                .unwrap();
-                let _ = request.respond(response.with_header(cc));
-                return;
-            }
-
             let _ = request.respond(response);
         });
     }

@@ -75,7 +75,8 @@ fn sample_index() -> Vec<packages::RemotePackage> {
         ver: "1.3.2".to_string(),
         rel: "5".to_string(),
         deps: vec!["musl".to_string()],
-        mkdeps: vec!["cmake".to_string()],
+        mkdeps_host: vec!["cmake".to_string()],
+        mkdeps_target: vec!["llvm-toolchain".to_string()],
         sha256: s3::sha256_hex(b"package"),
         size: 7,
         tarball: "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz".to_string(),
@@ -130,8 +131,13 @@ fn public_reads_return_index_and_objects() {
 
     let resp = packages::route("GET", "/index.json", &headers(&[]), b"", &state);
     assert_eq!(resp.status, 200);
+    assert_eq!(
+        resp.extra_headers,
+        vec![("Cache-Control", "no-store".to_string())]
+    );
     let idx = body_json(&resp);
     assert_eq!(idx[0]["name"], "zlib");
+    assert_eq!(idx[0]["mkdeps_target"], serde_json::json!(["llvm-toolchain"]));
 
     let resp = packages::route(
         "GET",

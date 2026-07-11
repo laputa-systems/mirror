@@ -16,7 +16,8 @@ pub struct RemotePackage {
     pub ver: String,
     pub rel: String,
     pub deps: Vec<String>,
-    pub mkdeps: Vec<String>,
+    pub mkdeps_host: Vec<String>,
+    pub mkdeps_target: Vec<String>,
     pub sha256: String,
     pub size: u64,
     pub tarball: String,
@@ -370,7 +371,11 @@ fn valid_upload_id(upload_id: &str) -> bool {
 fn get_index(state: &AppState) -> Response {
     let index = state.index.read().unwrap();
     let json = serde_json::to_vec_pretty(&*index).unwrap_or_else(|_| b"[]".to_vec());
-    Response::json_bytes(200, json)
+    let mut response = Response::json_bytes(200, json);
+    response
+        .extra_headers
+        .push(("Cache-Control", "no-store".to_string()));
+    response
 }
 
 fn put_index(body: &[u8], state: &AppState) -> Response {
@@ -454,7 +459,7 @@ fn root_index(headers: &HashMap<String, String>, state: &AppState) -> Response {
     } else {
         html.push_str(&format!(
             "<p class=count>{} packages</p>\
-            <table><tr><th>Package</th><th>Arch</th><th>Binary</th><th>Source</th><th>Dependencies</th><th>Build deps</th></tr>",
+            <table><tr><th>Package</th><th>Arch</th><th>Binary</th><th>Source</th><th>Dependencies</th><th>Host build deps</th><th>Target build deps</th></tr>",
             packages.len()
         ));
 
@@ -479,11 +484,12 @@ fn root_index(headers: &HashMap<String, String>, state: &AppState) -> Response {
                 )
             };
             html.push_str(&format!(
-                "<tr><td><strong>{}</strong></td><td><span class=dep>{}</span></td><td>{binary}</td><td>{source}</td><td>{}</td><td>{}</td></tr>",
+                "<tr><td><strong>{}</strong></td><td><span class=dep>{}</span></td><td>{binary}</td><td>{source}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
                 html_escape(&pkg.name),
                 html_escape(&pkg.arch),
                 deps_html(&pkg.deps),
-                deps_html(&pkg.mkdeps),
+                deps_html(&pkg.mkdeps_host),
+                deps_html(&pkg.mkdeps_target),
             ));
         }
 
@@ -729,7 +735,8 @@ mod tests {
             ver: "1.3.2".to_string(),
             rel: "5".to_string(),
             deps: vec!["musl".to_string()],
-            mkdeps: vec![],
+            mkdeps_host: vec![],
+            mkdeps_target: vec![],
             sha256: "a".repeat(64),
             size: 10,
             tarball: "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz".to_string(),
