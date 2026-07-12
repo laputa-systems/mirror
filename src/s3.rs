@@ -147,6 +147,7 @@ pub enum Storage {
         access_key: String,
         secret_key: String,
         region: String,
+        agent: ureq::Agent,
     },
     Memory(RwLock<HashMap<String, Vec<u8>>>),
 }
@@ -165,6 +166,7 @@ impl Storage {
             access_key: access_key.into(),
             secret_key: secret_key.into(),
             region: region.into(),
+            agent: ureq::Agent::new_with_defaults(),
         }
     }
 
@@ -182,6 +184,7 @@ impl Storage {
                 access_key,
                 secret_key,
                 region,
+                agent,
             } => {
                 let url = format!("{endpoint}/{bucket}/{key}");
                 let host = url
@@ -202,7 +205,7 @@ impl Storage {
                     "HEAD", &path, "", &hdr, &body_hash, access_key, secret_key, region, &date,
                     &datetime,
                 );
-                let result = ureq::Agent::new_with_defaults()
+                let result = agent
                     .head(&url)
                     .header("Authorization", &auth)
                     .header("X-Amz-Content-Sha256", &body_hash)
@@ -277,6 +280,7 @@ impl Storage {
             access_key,
             secret_key,
             region,
+            ..
         } = self
         else {
             return None;
@@ -322,6 +326,7 @@ impl Storage {
             access_key,
             secret_key,
             region,
+            agent,
         } = self
         else {
             return Err("not S3".into());
@@ -359,7 +364,7 @@ impl Storage {
             "PUT", &path, "", &hdr, &body_hash, access_key, secret_key, region, &date, &datetime,
         );
 
-        let response = ureq::Agent::new_with_defaults()
+        let response = agent
             .put(&url)
             .header("Authorization", &auth)
             .header("Content-Length", &content_length)
@@ -389,6 +394,7 @@ impl Storage {
             access_key,
             secret_key,
             region,
+            agent,
         } = self
         else {
             return Err("not S3".into());
@@ -427,8 +433,6 @@ impl Storage {
         let auth = sigv4_auth(
             method, &path, "", &hdr, &body_hash, access_key, secret_key, region, &date, &datetime,
         );
-
-        let agent = ureq::Agent::new_with_defaults();
 
         let result = match &*method {
             "GET" => agent

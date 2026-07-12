@@ -241,7 +241,6 @@ fn put(path: &str, headers: &HashMap<String, String>, body: &[u8], state: &AppSt
         return Response::not_found();
     };
 
-    let _upload_guard = state.upload_lock.lock().unwrap();
     match state.s3.put(&key, body.to_vec(), content_type_for(&key)) {
         Ok(()) => Response::json(201, r#"{"ok":true}"#),
         Err(e) => {
@@ -338,7 +337,6 @@ fn complete_chunked_upload(
     }
     drop(out);
 
-    let _upload_guard = state.upload_lock.lock().unwrap();
     match state.s3.put_file(&key, &assembled, content_type_for(&key)) {
         Ok(()) => {
             let _ = std::fs::remove_dir_all(&dir);
@@ -397,7 +395,7 @@ fn put_index(body: &[u8], state: &AppState) -> Response {
         }
     };
 
-    let _upload_guard = state.upload_lock.lock().unwrap();
+    let _index_guard = state.index_lock.lock().unwrap();
     if let Err(e) = state.s3.put("index.json", bytes, "application/json") {
         tracing::error!("index upload failed: {e}");
         return Response::error("index upload failed");

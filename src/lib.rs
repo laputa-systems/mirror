@@ -17,8 +17,8 @@ pub struct AppState {
     pub allowed_users: Vec<String>,
     pub index: RwLock<Vec<packages::RemotePackage>>,
     pub upload_dir: PathBuf,
-    /// Serializes concurrent uploads so two clients can't race on the same package.
-    pub upload_lock: Mutex<()>,
+    /// Serializes index publication and the corresponding in-memory index update.
+    pub index_lock: Mutex<()>,
     /// Set when RP_ORIGIN is https:// so Set-Cookie includes the Secure flag.
     pub secure_cookies: bool,
     /// If set, tarball GETs redirect here instead of proxying through the server.

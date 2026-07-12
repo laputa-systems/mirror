@@ -65,7 +65,7 @@ fn main() {
         allowed_users,
         index: std::sync::RwLock::new(index),
         upload_dir,
-        upload_lock: std::sync::Mutex::new(()),
+        index_lock: std::sync::Mutex::new(()),
         secure_cookies: rp_origin.starts_with("https://"),
         r2_public_url,
     });

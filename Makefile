@@ -1,7 +1,10 @@
 PREFIX ?= /usr
 DEB_ARCH ?= amd64
 
-.PHONY: all build build-frontend build-x86_64-musl deb clean
+.PHONY: all build build-frontend build-x86_64-musl deb deploy clean
+
+DEPLOY_HOST ?= oracle
+DEB_NAME ?= laputa-mirror_0.1.0_$(DEB_ARCH).deb
 
 all: build build-frontend
 
@@ -53,7 +56,11 @@ deb: build-x86_64-musl build-frontend
 	  'fi' \
 	  > target/deb-root/DEBIAN/postinst
 	chmod 755 target/deb-root/DEBIAN/postinst
-	dpkg-deb --root-owner-group --build target/deb-root laputa-mirror_0.1.0_$(DEB_ARCH).deb
+	dpkg-deb --root-owner-group --build target/deb-root $(DEB_NAME)
+
+deploy: deb
+	scp "$(DEB_NAME)" "$(DEPLOY_HOST):/tmp/$(DEB_NAME)"
+	ssh "$(DEPLOY_HOST)" "set -eu; sudo dpkg -i /tmp/$(DEB_NAME); sudo systemctl daemon-reload; sudo systemctl restart laputa-mirror; sudo systemctl enable --now laputa-mirror; sudo systemctl status --no-pager laputa-mirror"
 
 clean:
 	rm -rf node_modules

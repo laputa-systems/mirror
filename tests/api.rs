@@ -25,7 +25,7 @@ fn make_state() -> AppState {
         allowed_users: vec![TEST_USER.to_string()],
         index: RwLock::new(Vec::new()),
         upload_dir: unique_upload_dir(),
-        upload_lock: std::sync::Mutex::new(()),
+        index_lock: std::sync::Mutex::new(()),
         secure_cookies: false,
         r2_public_url: None,
     }

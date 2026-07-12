@@ -94,6 +94,17 @@ Output:
 laputa-mirror_0.1.0_amd64.deb
 ```
 
+Deploy the package to the configured `oracle` host and restart the service:
+
+```sh
+make deploy
+DEPLOY_HOST=another-host make deploy
+```
+
+The target requires SSH access and passwordless or available `sudo` on the
+remote host. It installs the package, reloads systemd, restarts and enables the
+mirror service, and prints its status.
+
 The package includes:
 
 - `/usr/bin/laputa-mirror`
