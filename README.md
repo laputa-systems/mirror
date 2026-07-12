@@ -39,7 +39,7 @@ On the machine where you build the `.deb`:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y build-essential curl pkg-config libssl-dev nodejs npm dpkg-dev
+sudo apt-get install -y build-essential curl pkg-config nodejs npm dpkg-dev docker.io
 ```
 
 Install Rust with rustup if it is not already present:
@@ -75,14 +75,18 @@ Do not configure `R2_PUBLIC_URL` for the tunnel-only setup.
 
 ## Build The Debian Package
 
-`make deb` builds debug `x86_64-unknown-linux-musl` binaries and packages them
-as `amd64`. It requires `cargo-zigbuild`:
+`make deb` builds release `x86_64-unknown-linux-musl` binaries inside a clean
+Alpine Linux Docker container and packages them as `amd64`. Only the output
+binaries are persisted on the host; the Rust toolchain and build artifacts stay
+inside the ephemeral container.
 
 ```sh
 cd /path/to/laputa-systems/mirror
-cargo install cargo-zigbuild
 make deb
 ```
+
+The first build downloads the Rust toolchain and compiles all dependencies from
+scratch. Subsequent builds also start from a fresh container.
 
 Output:
 
@@ -97,8 +101,6 @@ The package includes:
 - `/usr/share/laputa-mirror/static`
 - `/lib/systemd/system/laputa-mirror.service`
 - `/etc/laputa-mirror/env.example`
-
-The repository intentionally does not build release binaries from this target.
 
 Copy the package to the server:
 
@@ -147,7 +149,8 @@ separate multiple users.
 Start the local service:
 
 ```sh
-sudo systemctl daemon-reload
+# sudo systemctl daemon-reload
+sudo systemctl restart laputa-mirror
 sudo systemctl enable --now laputa-mirror
 sudo systemctl status laputa-mirror
 ```

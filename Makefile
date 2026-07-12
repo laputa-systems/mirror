@@ -1,5 +1,4 @@
 PREFIX ?= /usr
-MUSL_TARGET ?= x86_64-unknown-linux-musl
 DEB_ARCH ?= amd64
 
 .PHONY: all build build-frontend build-x86_64-musl deb clean
@@ -10,8 +9,11 @@ build:
 	cargo build --locked
 
 build-x86_64-musl:
-	command -v cargo-zigbuild >/dev/null
-	cargo zigbuild --locked --bins --target $(MUSL_TARGET)
+	mkdir -p target/docker-output
+	docker buildx build \
+	  --platform linux/amd64 \
+	  --output type=local,dest=target/docker-output \
+	  .
 
 build-frontend:
 	npm install
@@ -24,8 +26,8 @@ deb: build-x86_64-musl build-frontend
 	install -d target/deb-root/lib/systemd/system
 	install -d target/deb-root/etc/laputa-mirror
 	install -d target/deb-root/usr/share/laputa-mirror
-	install -m 755 target/$(MUSL_TARGET)/debug/laputa-mirror target/deb-root/usr/bin/laputa-mirror
-	install -m 755 target/$(MUSL_TARGET)/debug/laputa-mirror-publish target/deb-root/usr/bin/laputa-mirror-publish
+	install -m 755 target/docker-output/laputa-mirror target/deb-root/usr/bin/laputa-mirror
+	install -m 755 target/docker-output/laputa-mirror-publish target/deb-root/usr/bin/laputa-mirror-publish
 	install -m 644 laputa-mirror.service target/deb-root/lib/systemd/system/laputa-mirror.service
 	install -m 600 laputa-mirror.env.example target/deb-root/etc/laputa-mirror/env.example
 	cp -R static target/deb-root/usr/share/laputa-mirror/
@@ -56,4 +58,4 @@ deb: build-x86_64-musl build-frontend
 clean:
 	rm -rf node_modules
 	rm -f static/js/auth.js static/js/settings.js
-	rm -rf target/deb-root
+	rm -rf target/deb-root target/docker-output
