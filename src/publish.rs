@@ -71,16 +71,18 @@ pub fn prepare_publish(repo_dir: &Path) -> Result<PublishPlan, String> {
         let mirror = repo_dir
             .join(".out")
             .join("source-mirrors")
-            .join(format!("{}-{}-{}.tar.gz", entry.name, entry.ver, entry.rel));
+            .join(format!(
+                "{}-{}-{}-{}.tar.bz2",
+                entry.name, entry.ver, entry.rel, entry.arch
+            ));
         if mirror.exists() {
             let bytes =
                 std::fs::read(&mirror).map_err(|e| format!("read {}: {e}", mirror.display()))?;
             let rel = format!(
-                "sources/{}/{}-{}-{}-src.tar.gz",
-                entry.name, entry.name, entry.ver, entry.rel
+                "sources/{}/{}-{}-{}-{}-src.tar.bz2",
+                entry.name, entry.name, entry.ver, entry.rel, entry.arch
             );
             entry.source_sha256 = s3::sha256_hex(&bytes);
-            entry.source_tarball = rel.clone();
             uploads.push(PublishUpload { rel, path: mirror });
         }
     }
@@ -242,7 +244,6 @@ mod tests {
             tarball: "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz".to_string(),
             metadata: String::new(),
             source_sha256: String::new(),
-            source_tarball: String::new(),
             metapackage: false,
         }
     }
@@ -251,7 +252,7 @@ mod tests {
     fn source_mirror_maps_to_pm_source_path() {
         let dir = TestDir::new("source-map");
         dir.write("packages/aarch64/zlib/zlib-1.3.2-5.tar.gz", b"pkg");
-        dir.write(".out/source-mirrors/zlib-1.3.2-5.tar.gz", b"src");
+        dir.write(".out/source-mirrors/zlib-1.3.2-5-aarch64.tar.bz2", b"src");
         dir.write(
             "index.json",
             serde_json::to_vec(&vec![sample_entry()])
@@ -261,8 +262,8 @@ mod tests {
 
         let plan = prepare_publish(&dir.path).unwrap();
         assert_eq!(
-            plan.index[0].source_tarball,
-            "sources/zlib/zlib-1.3.2-5-src.tar.gz"
+            plan.uploads[1].rel,
+            "sources/zlib/zlib-1.3.2-5-aarch64-src.tar.bz2"
         );
         assert_eq!(plan.index[0].source_sha256, s3::sha256_hex(b"src"));
     }
@@ -291,7 +292,7 @@ mod tests {
         let dir = TestDir::new("order");
         dir.write("packages/aarch64/zlib/zlib-1.3.2-5.tar.gz", b"pkg");
         dir.write("metadata/aarch64/zlib/zlib-1.3.2-5.json", b"{}");
-        dir.write(".out/source-mirrors/zlib-1.3.2-5.tar.gz", b"src");
+        dir.write(".out/source-mirrors/zlib-1.3.2-5-aarch64.tar.bz2", b"src");
         dir.write(
             "index.json",
             serde_json::to_vec(&vec![sample_entry()])
@@ -305,7 +306,7 @@ mod tests {
             vec![
                 "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz",
                 "metadata/aarch64/zlib/zlib-1.3.2-5.json",
-                "sources/zlib/zlib-1.3.2-5-src.tar.gz",
+                "sources/zlib/zlib-1.3.2-5-aarch64-src.tar.bz2",
                 "index.json",
             ]
         );
@@ -330,7 +331,7 @@ mod tests {
         );
         assert!(
             out.path
-                .join("sources/zlib/zlib-1.3.2-5-src.tar.gz")
+                .join("sources/zlib/zlib-1.3.2-5-aarch64-src.tar.bz2")
                 .exists()
         );
         assert!(out.path.join("index.json").exists());

@@ -24,7 +24,6 @@ pub struct RemotePackage {
     #[serde(default)]
     pub metadata: String,
     pub source_sha256: String,
-    pub source_tarball: String,
     pub metapackage: bool,
 }
 
@@ -473,12 +472,12 @@ fn root_index(headers: &HashMap<String, String>, state: &AppState) -> Response {
                     fmt_size(pkg.size),
                 )
             };
-            let source = if pkg.source_tarball.is_empty() {
+            let source = if pkg.source_sha256.is_empty() {
                 "<span class=dep>-</span>".to_string()
             } else {
                 format!(
                     "<a href=\"/{}\">download</a>",
-                    html_attr(&pkg.source_tarball)
+                    html_attr(&source_rel(pkg))
                 )
             };
             html.push_str(&format!(
@@ -511,6 +510,13 @@ fn deps_html(deps: &[String]) -> String {
     )
 }
 
+fn source_rel(pkg: &RemotePackage) -> String {
+    format!(
+        "sources/{}/{}-{}-{}-{}-src.tar.bz2",
+        pkg.name, pkg.name, pkg.ver, pkg.rel, pkg.arch
+    )
+}
+
 fn package_key(path: &str) -> Option<String> {
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     if parts.len() == 4 && parts[0] == "packages" {
@@ -539,7 +545,7 @@ fn metadata_key(path: &str) -> Option<String> {
 }
 
 fn validate_object_path(prefix: &str, name: &str, file: &str, source: bool) -> Option<String> {
-    if !valid_pkg_name(name) || !file.ends_with(".tar.gz") {
+    if !valid_pkg_name(name) || !file.ends_with(if source { ".tar.bz2" } else { ".tar.gz" }) {
         return None;
     }
     if name.contains("..") || file.contains("..") || file.contains('/') || file.is_empty() {
@@ -548,7 +554,10 @@ fn validate_object_path(prefix: &str, name: &str, file: &str, source: bool) -> O
     if !file.starts_with(&format!("{name}-")) {
         return None;
     }
-    if source && !file.ends_with("-src.tar.gz") {
+    if source && !file.ends_with("-src.tar.bz2") {
+        return None;
+    }
+    if source && !file.ends_with("-aarch64-src.tar.bz2") && !file.ends_with("-x86_64-src.tar.bz2") {
         return None;
     }
     Some(format!("{prefix}/{name}/{file}"))
@@ -613,11 +622,6 @@ fn validate_index(index: &[RemotePackage]) -> Result<(), String> {
                 "tarball path does not match package arch/name for {}",
                 pkg.name
             ));
-        }
-        if !pkg.source_tarball.is_empty()
-            && source_key(&format!("/{}", pkg.source_tarball)).is_none()
-        {
-            return Err(format!("invalid source path for {}", pkg.name));
         }
         if !pkg.metadata.is_empty() {
             if metadata_key(&format!("/{}", pkg.metadata)).is_none() {
@@ -706,8 +710,8 @@ mod tests {
             Some("packages/zlib/zlib-1.3.2-5.tar.gz")
         );
         assert_eq!(
-            source_key("/sources/zlib/zlib-1.3.2-5-src.tar.gz").as_deref(),
-            Some("sources/zlib/zlib-1.3.2-5-src.tar.gz")
+            source_key("/sources/zlib/zlib-1.3.2-5-aarch64-src.tar.bz2").as_deref(),
+            Some("sources/zlib/zlib-1.3.2-5-aarch64-src.tar.bz2")
         );
         assert_eq!(
             metadata_key("/metadata/aarch64/zlib/zlib-1.3.2-5.json").as_deref(),
@@ -719,7 +723,7 @@ mod tests {
     fn object_paths_reject_traversal() {
         assert!(package_key("/packages/zlib/../../../etc/passwd").is_none());
         assert!(package_key("/packages/../zlib/zlib-1.tar.gz").is_none());
-        assert!(source_key("/sources/zlib/zlib-1.tar.gz").is_none());
+        assert!(source_key("/sources/zlib/zlib-1.tar.bz2").is_none());
         assert!(metadata_key("/metadata/aarch64/zlib/../../../etc/passwd").is_none());
         assert!(metadata_key("/metadata/../zlib/zlib-1.json").is_none());
         assert!(metadata_key("/metadata/aarch64/zlib/zlib-1.tar.gz").is_none());
@@ -740,7 +744,6 @@ mod tests {
             tarball: "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz".to_string(),
             metadata: "metadata/aarch64/zlib/zlib-1.3.2-5.json".to_string(),
             source_sha256: "b".repeat(64),
-            source_tarball: "sources/zlib/zlib-1.3.2-5-src.tar.gz".to_string(),
             metapackage: false,
         }];
         assert!(validate_index(&index).is_ok());

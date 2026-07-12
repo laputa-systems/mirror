@@ -6,11 +6,12 @@ bucket and exposes authenticated `PUT` publishing for:
 - `index.json`
 - `packages/<arch>/<name>/<name>-<ver>-<rel>.tar.gz`
 - `metadata/<arch>/<name>/<name>-<ver>-<rel>.json`
-- `sources/<name>/<name>-<ver>-<rel>-src.tar.gz`
+- `sources/<name>/<name>-<ver>-<rel>-<arch>-src.tar.bz2`
 
 The mirror accepts the older `packages/<name>/...` object path for existing
 arm64 packages, but new PM uploads use the arch-qualified path. Source mirrors
-stay shared across architectures.
+are target-architecture-specific and their paths are derived from the package
+index entry; the index does not store a source filename.
 
 This guide stands up a new mirror at `https://laputa.17166969.xyz/` using
 Cloudflare R2 for object storage and a Cloudflare Tunnel for the only public
@@ -278,8 +279,8 @@ The publisher:
 
 1. Uploads every package tarball from `packages/<arch>/`.
 2. Uploads package metadata sidecars from `metadata/<arch>/`.
-3. Maps `.out/source-mirrors/<pkg>-<ver>-<rel>.tar.gz` to
-   `sources/<pkg>/<pkg>-<ver>-<rel>-src.tar.gz`.
+3. Maps `.out/source-mirrors/<pkg>-<ver>-<rel>-<arch>.tar.bz2` to
+   `sources/<pkg>/<pkg>-<ver>-<rel>-<arch>-src.tar.bz2`.
 4. Recomputes package/source sha256 and package size metadata.
 5. Uploads `index.json` last.
 
@@ -293,7 +294,7 @@ Verify:
 curl -fsSL https://laputa.17166969.xyz/index.json | jq '.[].name'
 curl -I https://laputa.17166969.xyz/packages/aarch64/build-essential-native/build-essential-native-1-2.tar.gz
 curl -I https://laputa.17166969.xyz/metadata/aarch64/build-essential-native/build-essential-native-1-2.json
-curl -I https://laputa.17166969.xyz/sources/linux/linux-7.0.5-5-src.tar.gz
+curl -I https://laputa.17166969.xyz/sources/linux/linux-7.0.5-33-x86_64-src.tar.bz2
 ```
 
 ## GitHub Actions Publishing
