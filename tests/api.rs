@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-use laputa_mirror::{AppState, packages, s3};
+use laputa_mirror::{AppState, db, packages, s3};
 
 const TEST_USER: &str = "testuser";
 const TEST_TOKEN: &str = "aaaaaabbbbbbccccccddddddeeeeeeffffffffaaaaaaabbbbbbccccccddddddee";
@@ -77,11 +77,11 @@ fn sample_index() -> Vec<packages::RemotePackage> {
         deps: vec!["musl".to_string()],
         mkdeps_host: vec!["cmake".to_string()],
         mkdeps_target: vec!["llvm-toolchain".to_string()],
-        sha256: s3::sha256_hex(b"package"),
+        sha256: db::sha256_hex(b"package"),
         size: 7,
         tarball: "packages/aarch64/zlib/zlib-1.3.2-5.tar.gz".to_string(),
         metadata: String::new(),
-        source_sha256: s3::sha256_hex(b"source"),
+        source_sha256: db::sha256_hex(b"source"),
         metapackage: false,
     }]
 }
@@ -218,7 +218,7 @@ fn authenticated_puts_store_objects_and_index() {
     assert_eq!(resp.status, 201);
     assert_eq!(
         state.index.read().unwrap()[0].source_sha256,
-        s3::sha256_hex(b"source")
+        db::sha256_hex(b"source")
     );
 }
 

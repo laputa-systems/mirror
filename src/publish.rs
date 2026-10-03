@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::packages::RemotePackage;
-use crate::s3;
+use crate::db;
 
 const CHUNK_SIZE: usize = 25 * 1024 * 1024;
 const CHUNK_UPLOAD_THRESHOLD: u64 = 50 * 1024 * 1024;
@@ -43,7 +43,7 @@ pub fn prepare_publish(repo_dir: &Path) -> Result<PublishPlan, String> {
             let tarball = repo_dir.join(&entry.tarball);
             let bytes =
                 std::fs::read(&tarball).map_err(|e| format!("read {}: {e}", tarball.display()))?;
-            entry.sha256 = s3::sha256_hex(&bytes);
+            entry.sha256 = db::sha256_hex(&bytes);
             entry.size = bytes.len() as u64;
             uploads.push(PublishUpload {
                 rel: entry.tarball.clone(),
@@ -82,7 +82,7 @@ pub fn prepare_publish(repo_dir: &Path) -> Result<PublishPlan, String> {
                 "sources/{}/{}-{}-{}-{}-src.tar.bz2",
                 entry.name, entry.name, entry.ver, entry.rel, entry.arch
             );
-            entry.source_sha256 = s3::sha256_hex(&bytes);
+            entry.source_sha256 = db::sha256_hex(&bytes);
             uploads.push(PublishUpload { rel, path: mirror });
         }
     }
@@ -164,33 +164,25 @@ fn put_bytes(mirror_url: &str, token: &str, rel: &str, bytes: &[u8]) -> Result<(
     }
 
     let url = format!("{}/{}", mirror_url.trim_end_matches('/'), rel);
-    let mut response = ureq::Agent::new_with_defaults()
-        .put(&url)
-        .header("Authorization", &format!("Bearer {token}"))
-        .send(bytes)
-        .map_err(|e| format!("PUT {url}: {e}"))?;
-    let status: u16 = response.status().into();
-    if !(200..300).contains(&status) {
-        let mut message = String::new();
-        let _ = std::io::Read::read_to_string(&mut response.body_mut().as_reader(), &mut message);
-        return Err(format!("PUT {url}: HTTP {status} {message}"));
+    let auth = format!("Bearer {token}");
+    let reply = crate::http::send("PUT", &url, &[("Authorization", &auth)], bytes.to_vec())?;
+    if !reply.is_success() {
+        return Err(format!("PUT {url}: HTTP {} {}", reply.status, reply.body_text()));
     }
     Ok(())
 }
 
 fn post_bytes(mirror_url: &str, token: &str, rel: &str, bytes: &[u8]) -> Result<(), String> {
     let url = format!("{}/{}", mirror_url.trim_end_matches('/'), rel);
-    let mut response = ureq::Agent::new_with_defaults()
-        .post(&url)
-        .header("Authorization", &format!("Bearer {token}"))
-        .header("Content-Type", "application/json")
-        .send(bytes)
-        .map_err(|e| format!("POST {url}: {e}"))?;
-    let status: u16 = response.status().into();
-    if !(200..300).contains(&status) {
-        let mut message = String::new();
-        let _ = std::io::Read::read_to_string(&mut response.body_mut().as_reader(), &mut message);
-        return Err(format!("POST {url}: HTTP {status} {message}"));
+    let auth = format!("Bearer {token}");
+    let reply = crate::http::send(
+        "POST",
+        &url,
+        &[("Authorization", &auth), ("Content-Type", "application/json")],
+        bytes.to_vec(),
+    )?;
+    if !reply.is_success() {
+        return Err(format!("POST {url}: HTTP {} {}", reply.status, reply.body_text()));
     }
     Ok(())
 }
@@ -265,7 +257,7 @@ mod tests {
             plan.uploads[1].rel,
             "sources/zlib/zlib-1.3.2-5-aarch64-src.tar.bz2"
         );
-        assert_eq!(plan.index[0].source_sha256, s3::sha256_hex(b"src"));
+        assert_eq!(plan.index[0].source_sha256, db::sha256_hex(b"src"));
     }
 
     #[test]
@@ -283,7 +275,7 @@ mod tests {
         );
 
         let plan = prepare_publish(&dir.path).unwrap();
-        assert_eq!(plan.index[0].sha256, s3::sha256_hex(b"package bytes"));
+        assert_eq!(plan.index[0].sha256, db::sha256_hex(b"package bytes"));
         assert_eq!(plan.index[0].size, 13);
     }
 

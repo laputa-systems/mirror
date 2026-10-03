@@ -1,5 +1,5 @@
 use rusqlite::{Connection, Result, params};
-use sha2::{Digest, Sha256};
+use graviola::hashing::{Hash, Sha256};
 
 pub struct Db {
     conn: Connection,
@@ -300,9 +300,8 @@ impl Db {
     }
 }
 
-pub(crate) fn sha256_hex(data: &[u8]) -> String {
-    let hash: [u8; 32] = Sha256::digest(data).into();
-    hex_encode(&hash)
+pub fn sha256_hex(data: &[u8]) -> String {
+    hex_encode(Sha256::hash(data).as_ref())
 }
 
 pub(crate) fn hex_encode(bytes: &[u8]) -> String {

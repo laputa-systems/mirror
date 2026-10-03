@@ -4,10 +4,9 @@
 //! only the credential data from authData is extracted and used.
 
 use base64ct::{Base64UrlUnpadded, Encoding};
-use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
-use p256::{EncodedPoint, FieldBytes};
+use graviola::hashing::{Hash, Sha256};
+use graviola::signing::ecdsa::{P256, VerifyingKey};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::fmt;
 #[cfg(feature = "ts")]
 use ts_rs::TS;
@@ -378,7 +377,7 @@ impl RelyingParty {
                 "authenticatorData too short".into(),
             ));
         }
-        let rp_id_hash: [u8; 32] = Sha256::digest(self.rp_id.as_bytes()).into();
+        let rp_id_hash: [u8; 32] = sha256(self.rp_id.as_bytes());
         if auth_data[..32] != rp_id_hash {
             return Err(WebAuthnError::InvalidAuthData("rpIdHash mismatch".into()));
         }
@@ -388,28 +387,26 @@ impl RelyingParty {
         let sign_count = u32::from_be_bytes(auth_data[33..37].try_into().unwrap());
 
         // Verify ES256 signature over authData || SHA-256(clientDataJSON).
-        let cdj_hash: [u8; 32] = Sha256::digest(&cdj_bytes).into();
+        let cdj_hash: [u8; 32] = sha256(&cdj_bytes);
         let mut signed = auth_data.clone();
         signed.extend_from_slice(&cdj_hash);
 
         let sig_bytes = b64url_decode(&response.response.signature)?;
-        let point = EncodedPoint::from_affine_coordinates(
-            FieldBytes::from_slice(&cred.x),
-            FieldBytes::from_slice(&cred.y),
-            false,
-        );
-        let vk = VerifyingKey::from_encoded_point(&point)
+        let mut point = [0u8; 65];
+        point[0] = 0x04; // uncompressed X9.62 point
+        point[1..33].copy_from_slice(&cred.x);
+        point[33..].copy_from_slice(&cred.y);
+        let vk = VerifyingKey::<P256>::from_x962_uncompressed(&point)
             .map_err(|e| WebAuthnError::InvalidPublicKey(format!("invalid public key: {e}")))?;
 
-        let sig = if sig_bytes.len() == 64 {
-            Signature::from_slice(&sig_bytes)
-                .map_err(|e| WebAuthnError::DecodeError(format!("invalid raw signature: {e}")))?
+        // Authenticators emit either raw R||S or ASN.1 DER. A 64-byte signature is
+        // taken as raw; anything else must parse as DER.
+        let verified = if sig_bytes.len() == 64 {
+            vk.verify::<Sha256>(&[&signed], &sig_bytes)
         } else {
-            Signature::from_der(&sig_bytes)
-                .map_err(|e| WebAuthnError::DecodeError(format!("invalid DER signature: {e}")))?
+            vk.verify_asn1::<Sha256>(&[&signed], &sig_bytes)
         };
-        vk.verify(&signed, &sig)
-            .map_err(|_| WebAuthnError::InvalidSignature)?;
+        verified.map_err(|_| WebAuthnError::InvalidSignature)?;
 
         // Warn on sign_count regression — indicates possible authenticator cloning.
         // Don't hard-fail: many platform authenticators always return 0.
@@ -441,7 +438,7 @@ fn parse_auth_data_registration(
     if auth_data.len() < 37 {
         return Err(WebAuthnError::InvalidAuthData("authData too short".into()));
     }
-    let rp_id_hash: [u8; 32] = Sha256::digest(rp_id.as_bytes()).into();
+    let rp_id_hash: [u8; 32] = sha256(rp_id.as_bytes());
     if auth_data[..32] != rp_id_hash {
         return Err(WebAuthnError::InvalidAuthData("rpIdHash mismatch".into()));
     }
@@ -653,6 +650,13 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
+fn sha256(data: &[u8]) -> [u8; 32] {
+    Sha256::hash(data)
+        .as_ref()
+        .try_into()
+        .expect("SHA-256 output is 32 bytes")
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
@@ -660,8 +664,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use p256::SecretKey;
-    use p256::ecdsa::{Signature, SigningKey, signature::Signer};
+    use graviola::signing::ecdsa::SigningKey;
 
     fn make_rp() -> RelyingParty {
         RelyingParty::new("example.com", "https://example.com", "Example")
@@ -669,19 +672,43 @@ mod tests {
 
     /// A minimal software authenticator backed by a fixed P-256 key.
     struct SoftAuthenticator {
-        signing_key: SigningKey,
+        signing_key: SigningKey<P256>,
         cred_id: Vec<u8>,
     }
 
     impl SoftAuthenticator {
         fn new() -> Self {
-            // Scalar value 7 — arbitrary non-zero value well below the P-256 group order.
-            let mut key_bytes = [0u8; 32];
-            key_bytes[31] = 7;
+            Self::with_scalar(7)
+        }
+
+        /// A key whose private scalar is `scalar`, an arbitrary small non-zero value
+        /// well below the P-256 group order.
+        fn with_scalar(scalar: u8) -> Self {
+            // SEC1 ECPrivateKey (version 1) holding a 32-byte big-endian scalar.
+            let mut sec1 = vec![0x30, 0x25, 0x02, 0x01, 0x01, 0x04, 0x20];
+            sec1.extend_from_slice(&[0u8; 31]);
+            sec1.push(scalar);
             Self {
-                signing_key: SigningKey::from(SecretKey::from_slice(&key_bytes).unwrap()),
+                signing_key: SigningKey::from_sec1_der(&sec1).unwrap(),
                 cred_id: (1u8..=16).collect(),
             }
+        }
+
+        /// The public point's coordinates: an SPKI ends with the uncompressed point.
+        fn public_xy(&self) -> ([u8; 32], [u8; 32]) {
+            let mut buf = [0u8; 128];
+            let spki = self.signing_key.to_spki_der(&mut buf).unwrap();
+            let point = &spki[spki.len() - 65..];
+            assert_eq!(point[0], 0x04);
+            (point[1..33].try_into().unwrap(), point[33..].try_into().unwrap())
+        }
+
+        fn sign_der(&self, message: &[u8]) -> Vec<u8> {
+            let mut buf = [0u8; 80];
+            self.signing_key
+                .sign_asn1::<Sha256>(&[message], &mut buf)
+                .unwrap()
+                .to_vec()
         }
 
         fn cred_id_b64(&self) -> String {
@@ -689,9 +716,8 @@ mod tests {
         }
 
         fn make_cose_key(&self) -> Vec<u8> {
-            let point = self.signing_key.verifying_key().to_encoded_point(false);
-            let x = point.x().unwrap().to_vec();
-            let y = point.y().unwrap().to_vec();
+            let (x, y) = self.public_xy();
+            let (x, y) = (x.to_vec(), y.to_vec());
             let mut cbor = Vec::new();
             ciborium::ser::into_writer(
                 &ciborium::value::Value::Map(vec![
@@ -708,7 +734,7 @@ mod tests {
         }
 
         fn make_auth_data_with_cred(&self, rp_id: &str) -> Vec<u8> {
-            let rp_id_hash: [u8; 32] = sha2::Sha256::digest(rp_id.as_bytes()).into();
+            let rp_id_hash: [u8; 32] = sha256(rp_id.as_bytes());
             let cose_key = self.make_cose_key();
             let mut auth_data = Vec::new();
             auth_data.extend_from_slice(&rp_id_hash);
@@ -751,7 +777,7 @@ mod tests {
                 "rawId": self.cred_id_b64(),
                 "type": "public-key",
                 "response": {
-                    "clientDataJson": Base64UrlUnpadded::encode_string(&cdj_bytes),
+                    "clientDataJSON": Base64UrlUnpadded::encode_string(&cdj_bytes),
                     "attestationObject": Base64UrlUnpadded::encode_string(&attest_obj),
                 }
             })
@@ -764,7 +790,7 @@ mod tests {
             challenge: &str,
             sign_count: u32,
         ) -> serde_json::Value {
-            let rp_id_hash: [u8; 32] = sha2::Sha256::digest(rp_id.as_bytes()).into();
+            let rp_id_hash: [u8; 32] = sha256(rp_id.as_bytes());
             let mut auth_data = Vec::new();
             auth_data.extend_from_slice(&rp_id_hash);
             auth_data.push(0x05); // UP + UV flags
@@ -772,22 +798,21 @@ mod tests {
 
             let cdj = serde_json::json!({"type": "webauthn.get", "challenge": challenge, "origin": origin});
             let cdj_bytes = serde_json::to_vec(&cdj).unwrap();
-            let cdj_hash: [u8; 32] = Sha256::digest(&cdj_bytes).into();
+            let cdj_hash: [u8; 32] = sha256(&cdj_bytes);
 
             let mut signed = auth_data.clone();
             signed.extend_from_slice(&cdj_hash);
 
-            let sig: Signature = self.signing_key.sign(&signed);
-            let sig_der = sig.to_der();
+            let sig_der = self.sign_der(&signed);
 
             serde_json::json!({
                 "id": self.cred_id_b64(),
                 "rawId": self.cred_id_b64(),
                 "type": "public-key",
                 "response": {
-                    "clientDataJson": Base64UrlUnpadded::encode_string(&cdj_bytes),
+                    "clientDataJSON": Base64UrlUnpadded::encode_string(&cdj_bytes),
                     "authenticatorData": Base64UrlUnpadded::encode_string(&auth_data),
-                    "signature": Base64UrlUnpadded::encode_string(sig_der.as_bytes()),
+                    "signature": Base64UrlUnpadded::encode_string(&sig_der),
                     "userHandle": serde_json::Value::Null,
                 }
             })
@@ -881,12 +906,7 @@ mod tests {
         let cred = do_register(&rp, &authn);
 
         // Different key, same cred_id — simulates a forged assertion.
-        let mut key_bytes = [0u8; 32];
-        key_bytes[31] = 99;
-        let imposter = SoftAuthenticator {
-            signing_key: SigningKey::from(SecretKey::from_slice(&key_bytes).unwrap()),
-            cred_id: authn.cred_id.clone(),
-        };
+        let imposter = SoftAuthenticator::with_scalar(99);
 
         let (auth_opts, auth_state) = rp.start_authentication(std::slice::from_ref(&cred));
         let challenge = auth_opts.challenge.clone();

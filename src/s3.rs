@@ -4,16 +4,10 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::RwLock;
 
-use hmac::{Hmac, Mac};
-use sha2::{Digest, Sha256};
+use graviola::hashing::hmac::Hmac;
+use graviola::hashing::{Hash, HashContext, Sha256};
 
-type HmacSha256 = Hmac<Sha256>;
-
-pub fn sha256_hex(data: &[u8]) -> String {
-    let mut h = Sha256::new();
-    h.update(data);
-    hex_encode(h.finalize().as_slice())
-}
+use crate::db::{hex_encode, sha256_hex};
 
 fn sha256_file_hex(path: &Path) -> Result<String, String> {
     let mut file = File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
@@ -28,21 +22,13 @@ fn sha256_file_hex(path: &Path) -> Result<String, String> {
         }
         h.update(&buf[..n]);
     }
-    Ok(hex_encode(h.finalize().as_slice()))
+    Ok(hex_encode(h.finish().as_ref()))
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
-    let mut mac = HmacSha256::new_from_slice(key).unwrap();
+    let mut mac = Hmac::<Sha256>::new(key);
     mac.update(data);
-    mac.finalize().into_bytes().to_vec()
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::new(), |mut s, b| {
-        use std::fmt::Write;
-        write!(s, "{b:02x}").unwrap();
-        s
-    })
+    mac.finish().as_ref().to_vec()
 }
 
 /// UTC date/time from system clock. Returns (YYYYMMDD, YYYYMMDDTHHmmSSZ).
@@ -139,7 +125,7 @@ fn sigv4_auth(
     )
 }
 
-/// Storage backend: S3 via ureq or in-memory for tests.
+/// Storage backend: S3 or in-memory for tests.
 pub enum Storage {
     S3 {
         endpoint: String,
@@ -147,7 +133,6 @@ pub enum Storage {
         access_key: String,
         secret_key: String,
         region: String,
-        agent: ureq::Agent,
     },
     Memory(RwLock<HashMap<String, Vec<u8>>>),
 }
@@ -166,7 +151,6 @@ impl Storage {
             access_key: access_key.into(),
             secret_key: secret_key.into(),
             region: region.into(),
-            agent: ureq::Agent::new_with_defaults(),
         }
     }
 
@@ -184,7 +168,6 @@ impl Storage {
                 access_key,
                 secret_key,
                 region,
-                agent,
             } => {
                 let url = format!("{endpoint}/{bucket}/{key}");
                 let host = url
@@ -205,19 +188,21 @@ impl Storage {
                     "HEAD", &path, "", &hdr, &body_hash, access_key, secret_key, region, &date,
                     &datetime,
                 );
-                let result = agent
-                    .head(&url)
-                    .header("Authorization", &auth)
-                    .header("X-Amz-Content-Sha256", &body_hash)
-                    .header("X-Amz-Date", &datetime)
-                    .call();
-                match result {
-                    Ok(resp) => resp
-                        .headers()
-                        .get("content-length")
-                        .and_then(|v| v.to_str().ok())
-                        .and_then(|v| v.parse::<u64>().ok()),
-                    Err(_) => None,
+                let reply = crate::http::send(
+                    "HEAD",
+                    &url,
+                    &[
+                        ("Authorization", &auth),
+                        ("X-Amz-Content-Sha256", &body_hash),
+                        ("X-Amz-Date", &datetime),
+                    ],
+                    Vec::new(),
+                )
+                .ok()?;
+                if reply.is_success() {
+                    reply.content_length
+                } else {
+                    None
                 }
             }
         }
@@ -326,7 +311,6 @@ impl Storage {
             access_key,
             secret_key,
             region,
-            agent,
         } = self
         else {
             return Err("not S3".into());
@@ -334,11 +318,11 @@ impl Storage {
 
         let file = File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
         let body_hash = sha256_file_hex(path)?;
-        let content_length = file
+        let length = file
             .metadata()
             .map_err(|e| format!("metadata {}: {e}", path.display()))?
-            .len()
-            .to_string();
+            .len();
+        let content_length = length.to_string();
         let url = format!("{endpoint}/{bucket}/{key}");
         let host = url
             .strip_prefix("https://")
@@ -364,20 +348,23 @@ impl Storage {
             "PUT", &path, "", &hdr, &body_hash, access_key, secret_key, region, &date, &datetime,
         );
 
-        let response = agent
-            .put(&url)
-            .header("Authorization", &auth)
-            .header("Content-Length", &content_length)
-            .header("Content-Type", ct)
-            .header("X-Amz-Content-Sha256", &body_hash)
-            .header("X-Amz-Date", &datetime)
-            .send(file);
-
-        match response {
-            Ok(resp) if (200..300).contains(&u16::from(resp.status())) => Ok(()),
-            Ok(resp) => Err(format!("S3 PUT returned {}", resp.status())),
-            Err(ureq::Error::StatusCode(status)) => Err(format!("S3 PUT returned {status}")),
-            Err(e) => Err(format!("S3 PUT failed: {e}")),
+        let reply = crate::http::send_file(
+            "PUT",
+            &url,
+            &[
+                ("Authorization", &auth),
+                ("Content-Type", ct),
+                ("X-Amz-Content-Sha256", &body_hash),
+                ("X-Amz-Date", &datetime),
+            ],
+            file,
+            length,
+        )
+        .map_err(|e| format!("S3 PUT failed: {e}"))?;
+        if reply.is_success() {
+            Ok(())
+        } else {
+            Err(format!("S3 PUT returned {}", reply.status))
         }
     }
 
@@ -394,7 +381,6 @@ impl Storage {
             access_key,
             secret_key,
             region,
-            agent,
         } = self
         else {
             return Err("not S3".into());
@@ -434,42 +420,51 @@ impl Storage {
             method, &path, "", &hdr, &body_hash, access_key, secret_key, region, &date, &datetime,
         );
 
-        let result = match &*method {
-            "GET" => agent
-                .get(&url)
-                .header("Authorization", &auth)
-                .header("Content-Type", ct)
-                .header("X-Amz-Content-Sha256", &body_hash)
-                .header("X-Amz-Date", &datetime)
-                .call(),
-            "HEAD" => agent
-                .head(&url)
-                .header("Authorization", &auth)
-                .header("Content-Type", ct)
-                .header("X-Amz-Content-Sha256", &body_hash)
-                .header("X-Amz-Date", &datetime)
-                .call(),
-            "PUT" => agent
-                .put(&url)
-                .header("Authorization", &auth)
-                .header("Content-Length", &content_length)
-                .header("Content-Type", ct)
-                .header("X-Amz-Content-Sha256", &body_hash)
-                .header("X-Amz-Date", &datetime)
-                .send(body),
-            _ => return Err(format!("unsupported method: {method}")),
-        };
-
-        match result {
-            Ok(mut resp) => {
-                let status = resp.status();
-                let mut bytes = Vec::new();
-                std::io::Read::read_to_end(&mut resp.body_mut().as_reader(), &mut bytes)
-                    .unwrap_or_default();
-                Ok((status.into(), bytes))
-            }
-            Err(ureq::Error::StatusCode(status)) => Ok((status, vec![])),
-            Err(e) => Err(format!("S3 request failed: {e}")),
+        if !matches!(method, "GET" | "HEAD" | "PUT") {
+            return Err(format!("unsupported method: {method}"));
         }
+        let headers = [
+            ("Authorization", auth.as_str()),
+            ("Content-Type", ct),
+            ("X-Amz-Content-Sha256", body_hash.as_str()),
+            ("X-Amz-Date", datetime.as_str()),
+        ];
+        let reply = crate::http::send(method, &url, &headers, body.to_vec())
+            .map_err(|e| format!("S3 request failed: {e}"))?;
+        Ok((reply.status, reply.body))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sha256_matches_known_digest() {
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn hmac_sha256_matches_rfc4231_case_2() {
+        assert_eq!(
+            hex_encode(&hmac_sha256(b"Jefe", b"what do ya want for nothing?")),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
+
+    /// The key-derivation example from the AWS SigV4 documentation.
+    #[test]
+    fn sigv4_signing_key_matches_aws_documented_example() {
+        let dk = hmac_sha256(b"AWS4wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", b"20150830");
+        let rk = hmac_sha256(&dk, b"us-east-1");
+        let sk = hmac_sha256(&rk, b"iam");
+        let signing_key = hmac_sha256(&sk, b"aws4_request");
+        assert_eq!(
+            hex_encode(&signing_key),
+            "c4afb1cc5771d871763a393e44b703571b55cc28424d1a5e86da6ed3c154a4b9"
+        );
     }
 }

@@ -6,16 +6,18 @@ edition = "2024"
 [dependencies]
 base64ct = { version = "1", features = ["alloc"] }
 webauthn-minimal = { path = "vendor/webauthn-minimal" }
-hmac = "0.12"
-jsonwebtoken = "9"
+graviola = "0.4"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha2 = "0.10"
 tiny_http = "0.12"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-ureq = { version = "3.3.0", default-features = false, features = ["rustls", "platform-verifier"] }
+# Path dependency because the streaming request body (`request_streaming`) is not in a
+# published release yet; switch to the released version once it is, so the Docker build
+# does not need the sibling checkout.
+h12tiny-client-sync = { path = "../../h12tiny/crates/h12tiny-client-sync", features = ["tls"] }
+http = "1"
 uuid = { version = "1", features = ["v4"] }
 
 [profile.dev]
