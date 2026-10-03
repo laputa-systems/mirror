@@ -8,8 +8,6 @@ use graviola::hashing::{Hash, Sha256};
 use graviola::signing::ecdsa::{P256, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::fmt;
-#[cfg(feature = "ts")]
-use ts_rs::TS;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WebAuthnError {
@@ -45,8 +43,6 @@ impl fmt::Display for WebAuthnError {
 impl std::error::Error for WebAuthnError {}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(TS))]
-#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct RPInfo {
     pub id: String,
@@ -54,8 +50,6 @@ pub struct RPInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(TS))]
-#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct UserInfo {
     pub id: String,
@@ -64,30 +58,21 @@ pub struct UserInfo {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(TS))]
-#[cfg_attr(feature = "ts", ts(export))]
 pub struct PubKeyCredParam {
     #[serde(rename = "type")]
-    #[cfg_attr(feature = "ts", ts(type = "\"public-key\""))]
     pub cred_type: String,
     pub alg: i32,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(TS))]
-#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct AuthenticatorSelection {
-    #[cfg_attr(feature = "ts", ts(type = "ResidentKeyRequirement"))]
     pub resident_key: String,
     pub require_resident_key: bool,
-    #[cfg_attr(feature = "ts", ts(type = "UserVerificationRequirement"))]
     pub user_verification: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(TS))]
-#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct PublicKeyCredentialCreationOptions {
     pub rp: RPInfo,
@@ -96,49 +81,37 @@ pub struct PublicKeyCredentialCreationOptions {
     pub pub_key_cred_params: Vec<PubKeyCredParam>,
     pub timeout: u32,
     pub authenticator_selection: AuthenticatorSelection,
-    #[cfg_attr(feature = "ts", ts(type = "AttestationConveyancePreference"))]
     pub attestation: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(TS))]
-#[cfg_attr(feature = "ts", ts(export))]
 pub struct AllowCredential {
     #[serde(rename = "type")]
-    #[cfg_attr(feature = "ts", ts(type = "\"public-key\""))]
     pub cred_type: String,
     pub id: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(TS))]
-#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct PublicKeyCredentialRequestOptions {
     pub challenge: String,
     pub timeout: u32,
     pub rp_id: String,
     pub allow_credentials: Vec<AllowCredential>,
-    #[cfg_attr(feature = "ts", ts(type = "UserVerificationRequirement"))]
     pub user_verification: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(TS))]
-#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct RegistrationResponse {
     pub id: String,
     pub raw_id: String,
     #[serde(rename = "type")]
-    #[cfg_attr(feature = "ts", ts(type = "\"public-key\""))]
     pub cred_type: String,
     pub response: RegistrationResponseData,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(TS))]
-#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct RegistrationResponseData {
     #[serde(rename = "clientDataJSON")]
@@ -147,21 +120,16 @@ pub struct RegistrationResponseData {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(TS))]
-#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct AuthenticationResponse {
     pub id: String,
     pub raw_id: String,
     #[serde(rename = "type")]
-    #[cfg_attr(feature = "ts", ts(type = "\"public-key\""))]
     pub cred_type: String,
     pub response: AuthenticationResponseData,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "ts", derive(TS))]
-#[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct AuthenticationResponseData {
     #[serde(rename = "clientDataJSON")]

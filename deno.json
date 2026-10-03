@@ -5,8 +5,7 @@
     "build:settings": "deno run -A npm:rolldown static/js/settings.ts --file static/js/settings.js --format iife --minify",
     "typecheck": "deno run -A npm:typescript/tsc --noEmit",
     "lint": "deno run -A npm:oxlint --type-aware",
-    "check": "deno task lint && deno task typecheck",
-    "types": "cargo run -p webauthn-minimal --example gen-types --features ts"
+    "check": "deno task lint && deno task typecheck"
   },
   "nodeModulesDir": "auto",
   "imports": {

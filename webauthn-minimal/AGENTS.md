@@ -12,7 +12,6 @@
     - Provides basic structure validation for the `packed` attestation format.
 - **AAGUID Tracking**: Extracts and returns the Authenticator Attestation GUID (AAGUID) during registration.
 - **Type Safety**: Uses strongly typed request and response structures for registration and authentication ceremonies.
-- **TypeScript Integration**: Optional feature for generating TypeScript definitions for the public API.
 
 ## Architecture
 
@@ -23,10 +22,6 @@ The crate centers around the `RelyingParty` struct, which manages the configurat
 - **`RelyingParty`**: The main entry point. It handles the generation of options for the browser and the verification of the authenticator's responses.
 - **`StoredCredential`**: The data structure used to persist a user's public key, credential ID, AAGUID, and signature counter.
 - **Challenge State (`RegChallenge`, `AuthChallenge`)**: Minimal state objects designed to be stored in a session or database between the "start" and "finish" phases of a ceremony.
-
-### TypeScript Types
-
-Browser-facing request/response types are generated from the Rust structs with `ts-rs` (feature `ts`) into `ts/index.ts` by `deno task types` at the workspace root. The mirror's frontend imports them as `@webauthn-minimal/types`.
 
 ### Registration Flow
 

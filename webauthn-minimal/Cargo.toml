@@ -10,16 +10,3 @@ graviola = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
-ts-rs = { version = "12", optional = true }
-
-[features]
-ts = ["dep:ts-rs"]
-
-[dev-dependencies]
-tiny_http = "0.12"
-uuid = { version = "1", features = ["v4"] }
-ts-rs = "12"
-
-[[example]]
-name = "gen-types"
-required-features = ["ts"]

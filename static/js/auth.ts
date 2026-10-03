@@ -1,8 +1,16 @@
-import type {
-    PublicKeyCredentialCreationOptions as CreationOptionsJson,
-    PublicKeyCredentialRequestOptions as RequestOptionsJson,
-} from "@webauthn-minimal/types";
 import { api, button, el, input, setMsg, show, wireCopy } from "./common.ts";
+
+// Server-sent WebAuthn options: the W3C option dictionaries with every
+// binary field base64url-encoded as a string.
+type Base64url = string;
+type CreationOptionsJson = Omit<PublicKeyCredentialCreationOptions, "challenge" | "user" | "excludeCredentials"> & {
+    challenge: Base64url;
+    user: Omit<PublicKeyCredentialUserEntity, "id"> & { id: Base64url };
+};
+type RequestOptionsJson = Omit<PublicKeyCredentialRequestOptions, "challenge" | "allowCredentials"> & {
+    challenge: Base64url;
+    allowCredentials: (Omit<PublicKeyCredentialDescriptor, "id"> & { id: Base64url })[];
+};
 
 type OptionsResponse<O> = { session_id: string; options: O };
 type TokenResponse = { token: string };
