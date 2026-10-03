@@ -1,7 +1,7 @@
 PREFIX ?= /usr
 DEB_ARCH ?= amd64
 
-.PHONY: all build build-frontend build-x86_64-musl deb deploy clean
+.PHONY: all build build-frontend demo build-x86_64-musl deb deploy clean
 
 DEPLOY_HOST ?= oracle
 DEB_NAME ?= laputa-mirror_0.1.0_$(DEB_ARCH).deb
@@ -21,6 +21,10 @@ build-x86_64-musl:
 build-frontend:
 	deno install --frozen
 	deno task build
+
+# Interactive passkey walkthrough on http://localhost:3000; see examples/demo.rs.
+demo: build-frontend
+	cargo run --example demo
 
 deb: build-x86_64-musl build-frontend
 	rm -rf target/deb-root

@@ -124,29 +124,9 @@ pub fn route(
     state: &AppState,
 ) -> Response {
     if method == "GET"
-        && (path.starts_with("/static/") || path.ends_with(".js") || path.ends_with(".css"))
+        && let Some(asset) = path.strip_prefix("/static/")
     {
-        let static_path = if path.starts_with("/static/") {
-            path.strip_prefix("/static/").unwrap().to_string()
-        } else {
-            format!("js{}", path.strip_prefix('/').unwrap())
-        };
-        let full_path = format!("static/{static_path}");
-        if let Ok(bytes) = std::fs::read(&full_path) {
-            let content_type = if full_path.ends_with(".js") {
-                "application/javascript"
-            } else if full_path.ends_with(".css") {
-                "text/css"
-            } else {
-                "application/octet-stream"
-            };
-            return Response {
-                status: 200,
-                content_type,
-                body: bytes,
-                extra_headers: vec![],
-            };
-        }
+        return static_asset(asset);
     }
 
     match method {
@@ -167,6 +147,28 @@ pub fn route(
                 complete_chunked_upload(path, headers, body, state)
             }
             _ => Response::not_found(),
+        },
+        _ => Response::not_found(),
+    }
+}
+
+/// Serves a file from `static/`, which is read from disk relative to the working directory.
+fn static_asset(asset: &str) -> Response {
+    // Only plain nested names: no `..`, no absolute or empty segments.
+    let plain = asset
+        .split('/')
+        .all(|seg| !seg.is_empty() && seg != "." && seg != ".." && !seg.contains('\\'));
+    let content_type = match asset.rsplit_once('.') {
+        Some((_, "js")) => "application/javascript",
+        Some((_, "css")) => "text/css",
+        _ => return Response::not_found(),
+    };
+    match plain.then(|| std::fs::read(format!("static/{asset}"))) {
+        Some(Ok(body)) => Response {
+            status: 200,
+            content_type,
+            body,
+            extra_headers: vec![],
         },
         _ => Response::not_found(),
     }

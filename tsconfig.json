@@ -16,9 +16,7 @@
     "noPropertyAccessFromIndexSignature": true,
     "noUncheckedSideEffectImports": true,
     "verbatimModuleSyntax": true,
-    "isolatedModules": true,
-    "erasableSyntaxOnly": true,
-    "forceConsistentCasingInFileNames": true
+    "erasableSyntaxOnly": true
   },
   "include": ["static/js/*.ts"]
 }

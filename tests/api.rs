@@ -387,3 +387,20 @@ fn create_token_returns_usable_api_token() {
     );
     assert_eq!(resp.status, 201);
 }
+
+#[test]
+fn static_serves_assets_with_content_type() {
+    let state = make_state();
+    let resp = packages::route("GET", "/static/css/index.css", &headers(&[]), b"", &state);
+    assert_eq!(resp.status, 200);
+    assert_eq!(resp.content_type, "text/css");
+}
+
+#[test]
+fn static_rejects_path_traversal() {
+    let state = make_state();
+    for path in ["/static/../Cargo.toml", "/static/css/../../Cargo.toml"] {
+        let resp = packages::route("GET", path, &headers(&[]), b"", &state);
+        assert_eq!(resp.status, 404, "{path}");
+    }
+}

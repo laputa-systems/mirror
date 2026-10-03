@@ -1,8 +1,6 @@
 {
   "tasks": {
-    "build": "deno task build:auth && deno task build:settings",
-    "build:auth": "deno run -A npm:rolldown static/js/auth.ts --file static/js/auth.js --format iife --minify",
-    "build:settings": "deno run -A npm:rolldown static/js/settings.ts --file static/js/settings.js --format iife --minify",
+    "build": "deno run -A npm:rolldown static/js/auth.ts --file static/js/auth.js --format iife --minify && deno run -A npm:rolldown static/js/settings.ts --file static/js/settings.js --format iife --minify",
     "typecheck": "deno run -A npm:typescript/tsc --noEmit",
     "lint": "deno run -A npm:oxlint --type-aware",
     "check": "deno task lint && deno task typecheck"

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use tracing_subscriber::EnvFilter;
@@ -75,43 +74,7 @@ fn main() {
     println!("  packages: http://{listen_addr}/");
     println!("  auth:     http://{listen_addr}/auth");
 
-    for mut request in server.incoming_requests() {
-        let state = state.clone();
-        std::thread::spawn(move || {
-            let method = request.method().as_str().to_string();
-            let url = request.url().to_string();
-            let headers: HashMap<String, String> = request
-                .headers()
-                .iter()
-                .map(|h| {
-                    (
-                        h.field.as_str().as_str().to_lowercase(),
-                        h.value.as_str().to_string(),
-                    )
-                })
-                .collect();
-
-            let mut body = Vec::new();
-            let _ = request.as_reader().read_to_end(&mut body);
-
-            let resp = packages::route(&method, &url, &headers, &body, &state);
-
-            let ct =
-                tiny_http::Header::from_bytes(&b"Content-Type"[..], resp.content_type.as_bytes())
-                    .unwrap();
-
-            let mut response = tiny_http::Response::from_data(resp.body)
-                .with_status_code(resp.status)
-                .with_header(ct);
-            for (name, value) in &resp.extra_headers {
-                if let Ok(h) = tiny_http::Header::from_bytes(name.as_bytes(), value.as_bytes()) {
-                    response = response.with_header(h);
-                }
-            }
-
-            let _ = request.respond(response);
-        });
-    }
+    laputa_mirror::serve(server, state);
 }
 
 fn env_required(key: &str) -> String {
