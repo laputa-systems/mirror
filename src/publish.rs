@@ -165,7 +165,7 @@ fn put_bytes(mirror_url: &str, token: &str, rel: &str, bytes: &[u8]) -> Result<(
 
     let url = format!("{}/{}", mirror_url.trim_end_matches('/'), rel);
     let auth = format!("Bearer {token}");
-    let reply = crate::http::send("PUT", &url, &[("Authorization", &auth)], bytes.to_vec())?;
+    let reply = crate::http::send("PUT", &url, &[("Authorization", &auth)], bytes)?;
     if !reply.is_success() {
         return Err(format!("PUT {url}: HTTP {} {}", reply.status, reply.body_text()));
     }
@@ -179,7 +179,7 @@ fn post_bytes(mirror_url: &str, token: &str, rel: &str, bytes: &[u8]) -> Result<
         "POST",
         &url,
         &[("Authorization", &auth), ("Content-Type", "application/json")],
-        bytes.to_vec(),
+        bytes,
     )?;
     if !reply.is_success() {
         return Err(format!("POST {url}: HTTP {} {}", reply.status, reply.body_text()));

@@ -637,8 +637,7 @@ fn b64url_decode(s: &str) -> Result<Vec<u8>, WebAuthnError> {
 
 fn random_bytes(n: usize) -> Vec<u8> {
     let mut buf = vec![0u8; n];
-    let mut f = std::fs::File::open("/dev/urandom").expect("open /dev/urandom");
-    std::io::Read::read_exact(&mut f, &mut buf).expect("read /dev/urandom");
+    graviola::random::fill(&mut buf).expect("system random source");
     buf
 }
 

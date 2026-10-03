@@ -1,6 +1,6 @@
 use base64ct::{Base64UrlUnpadded, Encoding};
 use graviola::signing::rsa::VerifyingKey;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 #[derive(Clone)]
 pub struct JwtConfig {
@@ -30,16 +30,16 @@ struct JwksResponse {
     keys: Vec<JwkKey>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Claims {
-    pub iss: String,
-    pub sub: String,
+#[derive(Deserialize)]
+struct Claims {
+    iss: String,
+    sub: String,
     // aud can be a string or array in practice
-    pub aud: serde_json::Value,
-    pub exp: u64,
+    aud: serde_json::Value,
+    exp: u64,
     /// Not valid before this time; absent in tokens that do not restrict it.
     #[serde(default)]
-    pub nbf: Option<u64>,
+    nbf: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -68,7 +68,7 @@ impl JwksCache {
     }
 
     fn refresh(&mut self) -> Result<(), String> {
-        let reply = crate::http::send("GET", &self.config.jwks_url, &[], Vec::new())
+        let reply = crate::http::send("GET", &self.config.jwks_url, &[], &[])
             .map_err(|e| format!("jwks fetch: {e}"))?;
         if !reply.is_success() {
             return Err(format!("jwks fetch: HTTP {}", reply.status));
@@ -82,7 +82,7 @@ impl JwksCache {
     }
 
     /// Verify a JWT token against the cached JWKS, refreshing if stale.
-    pub fn verify(&mut self, token: &str) -> Result<Claims, String> {
+    pub fn verify(&mut self, token: &str) -> Result<(), String> {
         if self.needs_refresh() {
             self.refresh()?;
         }
@@ -152,7 +152,7 @@ impl JwksCache {
             ));
         }
 
-        Ok(claims)
+        Ok(())
     }
 }
 
@@ -260,8 +260,7 @@ mod tests {
 
     #[test]
     fn accepts_a_valid_token_from_a_fetched_jwks() {
-        let claims = cache(serve_jwks(1)).verify(VALID).unwrap();
-        assert_eq!(claims.sub, "repo:josh/mirror");
+        cache(serve_jwks(1)).verify(VALID).unwrap();
     }
 
     #[test]

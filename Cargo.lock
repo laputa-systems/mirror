@@ -315,7 +315,6 @@ dependencies = [
  "base64ct",
  "graviola",
  "h12tiny-client-sync",
- "http",
  "rusqlite",
  "serde",
  "serde_json",

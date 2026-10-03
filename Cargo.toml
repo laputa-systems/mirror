@@ -17,7 +17,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # published release yet; switch to the released version once it is, so the Docker build
 # does not need the sibling checkout.
 h12tiny-client-sync = { path = "../../h12tiny/crates/h12tiny-client-sync", features = ["tls"] }
-http = "1"
 uuid = { version = "1", features = ["v4"] }
 
 [profile.dev]

@@ -8,8 +8,8 @@ use std::fs::File;
 use std::io::Read;
 use std::sync::OnceLock;
 
+use h12tiny_client_sync::http::{self, Request};
 use h12tiny_client_sync::Client;
-use http::Request;
 
 pub struct Reply {
     pub status: u16,
@@ -39,13 +39,9 @@ pub fn send(
     method: &str,
     url: &str,
     headers: &[(&str, &str)],
-    body: Vec<u8>,
+    body: &[u8],
 ) -> Result<Reply, String> {
-    let request = build(method, url, headers, body)?;
-    let response = client()
-        .request(request)
-        .map_err(|e| describe(method, url, &e))?;
-    read_reply(method, url, response)
+    stream(method, url, headers, body, body.len() as u64)
 }
 
 /// Send a request whose body is streamed from `file`, which must hold exactly
@@ -57,7 +53,17 @@ pub fn send_file(
     file: File,
     length: u64,
 ) -> Result<Reply, String> {
-    let request = build(method, url, headers, file)?;
+    stream(method, url, headers, file, length)
+}
+
+fn stream(
+    method: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: impl Read,
+    length: u64,
+) -> Result<Reply, String> {
+    let request = build(method, url, headers, body)?;
     let response = client()
         .request_streaming(request, length, None)
         .map_err(|e| describe(method, url, &e))?;

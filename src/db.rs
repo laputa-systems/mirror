@@ -316,8 +316,7 @@ pub(crate) fn hex_encode(bytes: &[u8]) -> String {
 
 fn random_hex(n: usize) -> String {
     let mut buf = vec![0u8; n];
-    let mut f = std::fs::File::open("/dev/urandom").expect("open /dev/urandom");
-    std::io::Read::read_exact(&mut f, &mut buf).expect("read /dev/urandom");
+    graviola::random::fill(&mut buf).expect("system random source");
     hex_encode(&buf)
 }
 

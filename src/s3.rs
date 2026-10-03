@@ -8,6 +8,7 @@ use graviola::hashing::hmac::Hmac;
 use graviola::hashing::{Hash, HashContext, Sha256};
 
 use crate::db::{hex_encode, sha256_hex};
+use crate::http::Reply;
 
 fn sha256_file_hex(path: &Path) -> Result<String, String> {
     let mut file = File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
@@ -31,109 +32,250 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
     mac.finish().as_ref().to_vec()
 }
 
-/// UTC date/time from system clock. Returns (YYYYMMDD, YYYYMMDDTHHmmSSZ).
-fn utc_now() -> (String, String) {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    let time_of_day = secs % 86400;
-    let h = time_of_day / 3600;
-    let m = (time_of_day % 3600) / 60;
-    let s = time_of_day % 60;
-
-    // Howard Hinnant's civil_from_days.
-    let z = (secs / 86400) as i64 + 719468;
-    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
-    let doe = (z - era * 146097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
-    let yr = if mo <= 2 { y + 1 } else { y };
-
-    let date = format!("{yr:04}{mo:02}{d:02}");
-    let datetime = format!("{yr:04}{mo:02}{d:02}T{h:02}{m:02}{s:02}Z");
-    (date, datetime)
+/// The instant a request is signed, in the two forms SigV4 needs.
+struct Timestamp {
+    /// `YYYYMMDD`
+    date: String,
+    /// `YYYYMMDDTHHmmSSZ`
+    datetime: String,
 }
 
-fn sigv4_signature(
-    method: &str,
-    path: &str,
-    query: &str,
-    headers_sorted: &[(&str, &str)],
-    body_hash: &str,
-    secret_key: &str,
-    region: &str,
-    date: &str,
-    datetime: &str,
-) -> String {
-    let signed_headers: Vec<&str> = headers_sorted.iter().map(|(k, _)| *k).collect();
-    let signed_headers_str = signed_headers.join(";");
+impl Timestamp {
+    fn now() -> Self {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        Self::from_unix_secs(secs)
+    }
 
-    let canonical_headers: String = headers_sorted
-        .iter()
-        .map(|(k, v)| format!("{k}:{v}\n"))
-        .collect();
+    fn from_unix_secs(secs: u64) -> Self {
+        let time_of_day = secs % 86400;
+        let h = time_of_day / 3600;
+        let m = (time_of_day % 3600) / 60;
+        let s = time_of_day % 60;
 
-    let canonical = format!(
-        "{method}\n{path}\n{query}\n{canonical_headers}\n{signed_headers_str}\n{body_hash}"
-    );
-    let canonical_hash = sha256_hex(canonical.as_bytes());
+        // Howard Hinnant's civil_from_days.
+        let z = (secs / 86400) as i64 + 719468;
+        let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+        let doe = (z - era * 146097) as u64;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let y = yoe as i64 + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+        let yr = if mo <= 2 { y + 1 } else { y };
 
-    let scope = format!("{date}/{region}/s3/aws4_request");
-    let to_sign = format!("AWS4-HMAC-SHA256\n{datetime}\n{scope}\n{canonical_hash}");
-
-    let dk = hmac_sha256(format!("AWS4{secret_key}").as_bytes(), date.as_bytes());
-    let rk = hmac_sha256(&dk, region.as_bytes());
-    let sk = hmac_sha256(&rk, b"s3");
-    let signing_key = hmac_sha256(&sk, b"aws4_request");
-    hex_encode(&hmac_sha256(&signing_key, to_sign.as_bytes()))
+        Self {
+            date: format!("{yr:04}{mo:02}{d:02}"),
+            datetime: format!("{yr:04}{mo:02}{d:02}T{h:02}{m:02}{s:02}Z"),
+        }
+    }
 }
 
-fn sigv4_auth(
-    method: &str,
-    path: &str,
-    query: &str,
-    headers_sorted: &[(&str, &str)],
-    body_hash: &str,
-    access_key: &str,
-    secret_key: &str,
-    region: &str,
-    date: &str,
-    datetime: &str,
-) -> String {
-    let signed_headers: Vec<&str> = headers_sorted.iter().map(|(k, _)| *k).collect();
-    let signed_headers_str = signed_headers.join(";");
-    let scope = format!("{date}/{region}/s3/aws4_request");
-    let sig = sigv4_signature(
-        method,
-        path,
-        query,
-        headers_sorted,
-        body_hash,
-        secret_key,
-        region,
-        date,
-        datetime,
-    );
-    format!(
-        "AWS4-HMAC-SHA256 Credential={access_key}/{scope}, SignedHeaders={signed_headers_str}, Signature={sig}"
-    )
+/// The parts of a request that SigV4 signs.
+struct CanonicalRequest<'a> {
+    method: &'a str,
+    path: &'a str,
+    query: &'a str,
+    /// Lowercase names, sorted.
+    headers: &'a [(&'a str, &'a str)],
+    payload_hash: &'a str,
+}
+
+impl CanonicalRequest<'_> {
+    fn signed_headers(&self) -> String {
+        let names: Vec<&str> = self.headers.iter().map(|(k, _)| *k).collect();
+        names.join(";")
+    }
+}
+
+/// What a signed request sends as its body. A file is streamed, so its SHA-256
+/// and length are supplied up front instead of being derived from bytes in memory.
+enum Payload<'a> {
+    Bytes(&'a [u8]),
+    File {
+        file: File,
+        length: u64,
+        sha256: String,
+    },
+}
+
+/// Endpoint, credentials and signing for one S3-compatible bucket.
+pub struct S3Bucket {
+    endpoint: String,
+    bucket: String,
+    access_key: String,
+    secret_key: String,
+    region: String,
+}
+
+impl S3Bucket {
+    /// The endpoint's authority, which SigV4 signs as the `host` header.
+    fn host(&self) -> &str {
+        self.endpoint
+            .strip_prefix("https://")
+            .or_else(|| self.endpoint.strip_prefix("http://"))
+            .and_then(|r| r.split('/').next())
+            .unwrap_or("")
+    }
+
+    fn path(&self, key: &str) -> String {
+        format!("/{}/{key}", self.bucket)
+    }
+
+    fn url(&self, key: &str) -> String {
+        format!("{}{}", self.endpoint, self.path(key))
+    }
+
+    fn scope(&self, ts: &Timestamp) -> String {
+        format!("{}/{}/s3/aws4_request", ts.date, self.region)
+    }
+
+    fn signature(&self, request: &CanonicalRequest, ts: &Timestamp) -> String {
+        let canonical_headers: String = request
+            .headers
+            .iter()
+            .map(|(k, v)| format!("{k}:{v}\n"))
+            .collect();
+        let canonical = format!(
+            "{}\n{}\n{}\n{canonical_headers}\n{}\n{}",
+            request.method,
+            request.path,
+            request.query,
+            request.signed_headers(),
+            request.payload_hash,
+        );
+        let to_sign = format!(
+            "AWS4-HMAC-SHA256\n{}\n{}\n{}",
+            ts.datetime,
+            self.scope(ts),
+            sha256_hex(canonical.as_bytes()),
+        );
+
+        let dk = hmac_sha256(format!("AWS4{}", self.secret_key).as_bytes(), ts.date.as_bytes());
+        let rk = hmac_sha256(&dk, self.region.as_bytes());
+        let sk = hmac_sha256(&rk, b"s3");
+        let signing_key = hmac_sha256(&sk, b"aws4_request");
+        hex_encode(&hmac_sha256(&signing_key, to_sign.as_bytes()))
+    }
+
+    fn authorization(&self, request: &CanonicalRequest, ts: &Timestamp) -> String {
+        format!(
+            "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
+            self.access_key,
+            self.scope(ts),
+            request.signed_headers(),
+            self.signature(request, ts),
+        )
+    }
+
+    /// Send a signed request. `content_type` is `Some` only for requests with a
+    /// body, where it and the content length are signed along with the host and
+    /// payload hash.
+    fn request(
+        &self,
+        method: &str,
+        key: &str,
+        content_type: Option<&str>,
+        payload: Payload,
+    ) -> Result<Reply, String> {
+        let (payload_hash, length) = match &payload {
+            Payload::Bytes(bytes) => (sha256_hex(bytes), bytes.len() as u64),
+            Payload::File { sha256, length, .. } => (sha256.clone(), *length),
+        };
+        let ts = Timestamp::now();
+        let length_text = length.to_string();
+
+        let mut signed = vec![
+            ("host", self.host()),
+            ("x-amz-content-sha256", payload_hash.as_str()),
+            ("x-amz-date", ts.datetime.as_str()),
+        ];
+        if let Some(content_type) = content_type {
+            signed.push(("content-length", length_text.as_str()));
+            signed.push(("content-type", content_type));
+        }
+        signed.sort_by_key(|(name, _)| *name);
+        let authorization = self.authorization(
+            &CanonicalRequest {
+                method,
+                path: &self.path(key),
+                query: "",
+                headers: &signed,
+                payload_hash: &payload_hash,
+            },
+            &ts,
+        );
+
+        // Content-Length and Host are added by the HTTP client from the body and URL.
+        let mut headers = vec![
+            ("Authorization", authorization.as_str()),
+            ("X-Amz-Content-Sha256", payload_hash.as_str()),
+            ("X-Amz-Date", ts.datetime.as_str()),
+        ];
+        if let Some(content_type) = content_type {
+            headers.push(("Content-Type", content_type));
+        }
+
+        let url = self.url(key);
+        match payload {
+            Payload::Bytes(bytes) => crate::http::send(method, &url, &headers, bytes),
+            Payload::File { file, length, .. } => {
+                crate::http::send_file(method, &url, &headers, file, length)
+            }
+        }
+        .map_err(|e| format!("S3 {method} failed: {e}"))
+    }
+
+    /// A URL granting `method` on `key` for `expires_secs`, signed with an
+    /// unsigned payload so the body need not be known in advance.
+    fn presign(&self, method: &str, key: &str, expires_secs: u64, ts: &Timestamp) -> String {
+        // Percent-encode '/' in credential for the query string.
+        let credential = format!("{}/{}", self.access_key, self.scope(ts)).replace('/', "%2F");
+        // Query parameters must be sorted alphabetically.
+        let query = format!(
+            "X-Amz-Algorithm=AWS4-HMAC-SHA256\
+            &X-Amz-Credential={credential}\
+            &X-Amz-Date={}\
+            &X-Amz-Expires={expires_secs}\
+            &X-Amz-SignedHeaders=host",
+            ts.datetime
+        );
+        let signature = self.signature(
+            &CanonicalRequest {
+                method,
+                path: &self.path(key),
+                query: &query,
+                headers: &[("host", self.host())],
+                payload_hash: "UNSIGNED-PAYLOAD",
+            },
+            ts,
+        );
+        format!("{}?{query}&X-Amz-Signature={signature}", self.url(key))
+    }
+}
+
+fn stored(reply: Reply) -> Result<(), String> {
+    if reply.is_success() {
+        Ok(())
+    } else {
+        Err(format!("S3 PUT returned {}", reply.status))
+    }
+}
+
+fn content_type_or_default(content_type: &str) -> &str {
+    if content_type.is_empty() {
+        "application/octet-stream"
+    } else {
+        content_type
+    }
 }
 
 /// Storage backend: S3 or in-memory for tests.
 pub enum Storage {
-    S3 {
-        endpoint: String,
-        bucket: String,
-        access_key: String,
-        secret_key: String,
-        region: String,
-    },
+    S3(S3Bucket),
     Memory(RwLock<HashMap<String, Vec<u8>>>),
 }
 
@@ -145,13 +287,13 @@ impl Storage {
         secret_key: &str,
         region: &str,
     ) -> Self {
-        Self::S3 {
+        Self::S3(S3Bucket {
             endpoint: endpoint.into(),
             bucket: bucket.into(),
             access_key: access_key.into(),
             secret_key: secret_key.into(),
             region: region.into(),
-        }
+        })
     }
 
     pub fn memory() -> Self {
@@ -162,43 +304,10 @@ impl Storage {
     pub fn object_size(&self, key: &str) -> Option<u64> {
         match self {
             Self::Memory(map) => map.read().unwrap().get(key).map(|b| b.len() as u64),
-            Self::S3 {
-                endpoint,
-                bucket,
-                access_key,
-                secret_key,
-                region,
-            } => {
-                let url = format!("{endpoint}/{bucket}/{key}");
-                let host = url
-                    .strip_prefix("https://")
-                    .or_else(|| url.strip_prefix("http://"))
-                    .and_then(|r| r.split('/').next())
-                    .unwrap_or("")
-                    .to_string();
-                let path = format!("/{bucket}/{key}");
-                let body_hash = sha256_hex(b"");
-                let (date, datetime) = utc_now();
-                let hdr = [
-                    ("host", host.as_str()),
-                    ("x-amz-content-sha256", body_hash.as_str()),
-                    ("x-amz-date", datetime.as_str()),
-                ];
-                let auth = sigv4_auth(
-                    "HEAD", &path, "", &hdr, &body_hash, access_key, secret_key, region, &date,
-                    &datetime,
-                );
-                let reply = crate::http::send(
-                    "HEAD",
-                    &url,
-                    &[
-                        ("Authorization", &auth),
-                        ("X-Amz-Content-Sha256", &body_hash),
-                        ("X-Amz-Date", &datetime),
-                    ],
-                    Vec::new(),
-                )
-                .ok()?;
+            Self::S3(bucket) => {
+                let reply = bucket
+                    .request("HEAD", key, None, Payload::Bytes(&[]))
+                    .ok()?;
                 if reply.is_success() {
                     reply.content_length
                 } else {
@@ -210,9 +319,9 @@ impl Storage {
 
     pub fn get(&self, key: &str) -> Option<Vec<u8>> {
         match self {
-            Self::S3 { .. } => {
-                let (status, body) = self.s3_request("GET", key, &[], "").ok()?;
-                if status == 200 { Some(body) } else { None }
+            Self::S3(bucket) => {
+                let reply = bucket.request("GET", key, None, Payload::Bytes(&[])).ok()?;
+                (reply.status == 200).then_some(reply.body)
             }
             Self::Memory(map) => map.read().unwrap().get(key).cloned(),
         }
@@ -220,14 +329,12 @@ impl Storage {
 
     pub fn put(&self, key: &str, body: Vec<u8>, content_type: &str) -> Result<(), String> {
         match self {
-            Self::S3 { .. } => {
-                let (status, _) = self.s3_request("PUT", key, &body, content_type)?;
-                if (200..300).contains(&status) {
-                    Ok(())
-                } else {
-                    Err(format!("S3 PUT returned {status}"))
-                }
-            }
+            Self::S3(bucket) => stored(bucket.request(
+                "PUT",
+                key,
+                Some(content_type_or_default(content_type)),
+                Payload::Bytes(&body),
+            )?),
             Self::Memory(map) => {
                 map.write().unwrap().insert(key.to_string(), body);
                 Ok(())
@@ -237,7 +344,24 @@ impl Storage {
 
     pub fn put_file(&self, key: &str, path: &Path, content_type: &str) -> Result<(), String> {
         match self {
-            Self::S3 { .. } => self.s3_put_file(key, path, content_type),
+            Self::S3(bucket) => {
+                let file =
+                    File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
+                let length = file
+                    .metadata()
+                    .map_err(|e| format!("metadata {}: {e}", path.display()))?
+                    .len();
+                stored(bucket.request(
+                    "PUT",
+                    key,
+                    Some(content_type_or_default(content_type)),
+                    Payload::File {
+                        file,
+                        length,
+                        sha256: sha256_file_hex(path)?,
+                    },
+                )?)
+            }
             Self::Memory(_) => {
                 let body =
                     std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
@@ -259,212 +383,105 @@ impl Storage {
     }
 
     fn presign_url(&self, method: &str, key: &str, expires_secs: u64) -> Option<String> {
-        let Self::S3 {
-            endpoint,
-            bucket,
-            access_key,
-            secret_key,
-            region,
-            ..
-        } = self
-        else {
-            return None;
-        };
-        let (date, datetime) = utc_now();
-        let scope = format!("{date}/{region}/s3/aws4_request");
-        // Percent-encode '/' in credential for the query string.
-        let credential = format!("{access_key}/{scope}").replace('/', "%2F");
-        // Query parameters must be sorted alphabetically.
-        let query = format!(
-            "X-Amz-Algorithm=AWS4-HMAC-SHA256\
-            &X-Amz-Credential={credential}\
-            &X-Amz-Date={datetime}\
-            &X-Amz-Expires={expires_secs}\
-            &X-Amz-SignedHeaders=host"
-        );
-        let url = format!("{endpoint}/{bucket}/{key}");
-        let host = url
-            .strip_prefix("https://")
-            .or_else(|| url.strip_prefix("http://"))
-            .and_then(|r| r.split('/').next())
-            .unwrap_or("");
-        let path = format!("/{bucket}/{key}");
-        let headers_sorted = vec![("host", host)];
-        let sig = sigv4_signature(
-            method,
-            &path,
-            &query,
-            &headers_sorted,
-            "UNSIGNED-PAYLOAD",
-            secret_key,
-            region,
-            &date,
-            &datetime,
-        );
-        Some(format!("{url}?{query}&X-Amz-Signature={sig}"))
-    }
-
-    fn s3_put_file(&self, key: &str, path: &Path, content_type: &str) -> Result<(), String> {
-        let Self::S3 {
-            endpoint,
-            bucket,
-            access_key,
-            secret_key,
-            region,
-        } = self
-        else {
-            return Err("not S3".into());
-        };
-
-        let file = File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
-        let body_hash = sha256_file_hex(path)?;
-        let length = file
-            .metadata()
-            .map_err(|e| format!("metadata {}: {e}", path.display()))?
-            .len();
-        let content_length = length.to_string();
-        let url = format!("{endpoint}/{bucket}/{key}");
-        let host = url
-            .strip_prefix("https://")
-            .or_else(|| url.strip_prefix("http://"))
-            .and_then(|r| r.split('/').next())
-            .unwrap_or("");
-        let path = format!("/{bucket}/{key}");
-        let (date, datetime) = utc_now();
-        let ct = if content_type.is_empty() {
-            "application/octet-stream"
-        } else {
-            content_type
-        };
-        let mut hdr = vec![
-            ("content-length", content_length.as_str()),
-            ("content-type", ct),
-            ("host", host),
-            ("x-amz-content-sha256", body_hash.as_str()),
-            ("x-amz-date", datetime.as_str()),
-        ];
-        hdr.sort_by_key(|(k, _)| *k);
-        let auth = sigv4_auth(
-            "PUT", &path, "", &hdr, &body_hash, access_key, secret_key, region, &date, &datetime,
-        );
-
-        let reply = crate::http::send_file(
-            "PUT",
-            &url,
-            &[
-                ("Authorization", &auth),
-                ("Content-Type", ct),
-                ("X-Amz-Content-Sha256", &body_hash),
-                ("X-Amz-Date", &datetime),
-            ],
-            file,
-            length,
-        )
-        .map_err(|e| format!("S3 PUT failed: {e}"))?;
-        if reply.is_success() {
-            Ok(())
-        } else {
-            Err(format!("S3 PUT returned {}", reply.status))
+        match self {
+            Self::S3(bucket) => Some(bucket.presign(method, key, expires_secs, &Timestamp::now())),
+            Self::Memory(_) => None,
         }
-    }
-
-    fn s3_request(
-        &self,
-        method: &str,
-        key: &str,
-        body: &[u8],
-        content_type: &str,
-    ) -> Result<(u16, Vec<u8>), String> {
-        let Self::S3 {
-            endpoint,
-            bucket,
-            access_key,
-            secret_key,
-            region,
-        } = self
-        else {
-            return Err("not S3".into());
-        };
-
-        let url = format!("{endpoint}/{bucket}/{key}");
-        let host = url
-            .strip_prefix("https://")
-            .or_else(|| url.strip_prefix("http://"))
-            .and_then(|r| r.split('/').next())
-            .unwrap_or("");
-        let path = format!("/{bucket}/{key}");
-
-        let body_hash = sha256_hex(body);
-        let (date, datetime) = utc_now();
-        let content_length = body.len().to_string();
-        let is_put = method == "PUT";
-
-        let ct = if content_type.is_empty() {
-            "application/octet-stream"
-        } else {
-            content_type
-        };
-        let mut hdr = vec![
-            ("host", host),
-            ("x-amz-content-sha256", &body_hash),
-            ("x-amz-date", &datetime),
-        ];
-        // Only include content-type and content-length in signed headers for PUT.
-        if is_put {
-            hdr.push(("content-length", content_length.as_str()));
-            hdr.push(("content-type", ct));
-        }
-        hdr.sort_by_key(|(k, _)| *k);
-
-        let auth = sigv4_auth(
-            method, &path, "", &hdr, &body_hash, access_key, secret_key, region, &date, &datetime,
-        );
-
-        if !matches!(method, "GET" | "HEAD" | "PUT") {
-            return Err(format!("unsupported method: {method}"));
-        }
-        let headers = [
-            ("Authorization", auth.as_str()),
-            ("Content-Type", ct),
-            ("X-Amz-Content-Sha256", body_hash.as_str()),
-            ("X-Amz-Date", datetime.as_str()),
-        ];
-        let reply = crate::http::send(method, &url, &headers, body.to_vec())
-            .map_err(|e| format!("S3 request failed: {e}"))?;
-        Ok((reply.status, reply.body))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
     use super::*;
 
+    fn aws_example_bucket() -> S3Bucket {
+        S3Bucket {
+            endpoint: "https://examplebucket.s3.amazonaws.com".into(),
+            bucket: String::new(),
+            access_key: "AKIAIOSFODNN7EXAMPLE".into(),
+            secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY".into(),
+            region: "us-east-1".into(),
+        }
+    }
+
     #[test]
-    fn sha256_matches_known_digest() {
+    fn timestamp_formats_unix_seconds() {
+        let ts = Timestamp::from_unix_secs(1369353600);
+        assert_eq!(ts.date, "20130524");
+        assert_eq!(ts.datetime, "20130524T000000Z");
+    }
+
+    /// The presigned-URL example from the AWS SigV4 query-string documentation.
+    #[test]
+    fn signature_matches_aws_documented_presigned_get() {
+        let query = "X-Amz-Algorithm=AWS4-HMAC-SHA256\
+            &X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request\
+            &X-Amz-Date=20130524T000000Z\
+            &X-Amz-Expires=86400\
+            &X-Amz-SignedHeaders=host";
+        let signature = aws_example_bucket().signature(
+            &CanonicalRequest {
+                method: "GET",
+                path: "/test.txt",
+                query,
+                headers: &[("host", "examplebucket.s3.amazonaws.com")],
+                payload_hash: "UNSIGNED-PAYLOAD",
+            },
+            &Timestamp::from_unix_secs(1369353600),
+        );
         assert_eq!(
-            sha256_hex(b"abc"),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            signature,
+            "aeeed9bbccd4d02ee5c0109b86d86835f995330da4c265957d157751f604d404"
         );
     }
 
     #[test]
-    fn hmac_sha256_matches_rfc4231_case_2() {
-        assert_eq!(
-            hex_encode(&hmac_sha256(b"Jefe", b"what do ya want for nothing?")),
-            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
-        );
+    fn presigned_url_carries_credential_expiry_and_signature() {
+        let bucket = S3Bucket {
+            endpoint: "https://s3.test".into(),
+            bucket: "mirror".into(),
+            ..aws_example_bucket()
+        };
+        let url = bucket.presign("GET", "pkg/a.tar", 300, &Timestamp::from_unix_secs(1369353600));
+        assert!(url.starts_with("https://s3.test/mirror/pkg/a.tar?X-Amz-Algorithm=AWS4-HMAC-SHA256&"));
+        assert!(url.contains("X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request"));
+        assert!(url.contains("&X-Amz-Expires=300&X-Amz-SignedHeaders=host&X-Amz-Signature="));
     }
 
-    /// The key-derivation example from the AWS SigV4 documentation.
     #[test]
-    fn sigv4_signing_key_matches_aws_documented_example() {
-        let dk = hmac_sha256(b"AWS4wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY", b"20150830");
-        let rk = hmac_sha256(&dk, b"us-east-1");
-        let sk = hmac_sha256(&rk, b"iam");
-        let signing_key = hmac_sha256(&sk, b"aws4_request");
-        assert_eq!(
-            hex_encode(&signing_key),
-            "c4afb1cc5771d871763a393e44b703571b55cc28424d1a5e86da6ed3c154a4b9"
-        );
+    fn put_sends_signed_headers_and_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            // Read until the 5-byte body has arrived after the head.
+            while !request.ends_with(b"hello") {
+                let mut piece = [0_u8; 1024];
+                let read = stream.read(&mut piece).unwrap();
+                assert!(read > 0, "client closed before sending the body");
+                request.extend_from_slice(&piece[..read]);
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            String::from_utf8(request).unwrap()
+        });
+
+        let storage = Storage::s3(&endpoint, "mirror", "AKID", "secret", "auto");
+        storage.put("pkg/a.txt", b"hello".to_vec(), "text/plain").unwrap();
+
+        let request = server.join().unwrap();
+        assert!(request.starts_with("PUT /mirror/pkg/a.txt HTTP/1.1\r\n"));
+        let lower = request.to_ascii_lowercase();
+        assert!(lower.contains("content-type: text/plain\r\n"));
+        assert!(lower.contains("content-length: 5\r\n"));
+        assert!(lower.contains(&format!("x-amz-content-sha256: {}\r\n", sha256_hex(b"hello"))));
+        assert!(lower.contains(
+            "signedheaders=content-length;content-type;host;x-amz-content-sha256;x-amz-date,"
+        ));
     }
 }
