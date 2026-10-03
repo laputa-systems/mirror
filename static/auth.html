@@ -8,8 +8,7 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: system-ui, sans-serif; max-width: 400px; margin: 0 auto; padding: 4rem 1rem; color: #e0e0e0; background: #1a1a1a; }
         h1 { font-size: 1.2rem; color: #fff; margin-bottom: 1.5rem; text-align: center; }
-        section { display: none; margin-bottom: 1.5rem; }
-        section:target, section.active { display: block; }
+        section { margin-bottom: 1.5rem; }
         .row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-bottom: .5rem; }
         input { padding: .5rem .7rem; border: 1px solid #444; border-radius: 6px; background: #111; color: #e0e0e0; font-size: .9rem; font-family: inherit; flex: 1; }
         .btn { padding: .5rem 1rem; border: none; border-radius: 6px; background: #4c8cf8; color: #fff; font-size: .9rem; cursor: pointer; font-family: inherit; }
@@ -18,7 +17,7 @@
         .err { color: #f87171; }
         .token-box { margin-top: .75rem; padding: .75rem; background: #111; border: 1px solid #333; border-radius: 6px; font-family: monospace; font-size: .8rem; word-break: break-all; color: #a3e635; user-select: all; }
         .copy-btn { margin-top: .4rem; padding: .3rem .7rem; font-size: .8rem; background: #222; color: #ccc; border: 1px solid #444; border-radius: 4px; cursor: pointer; }
-        #back-btn { background: none; border: none; color: #888; cursor: pointer; font-size: .8rem; text-decoration: underline; margin-bottom: 1rem; }
+        #back-btn { display: block; margin: 0 auto; background: none; border: none; color: #888; cursor: pointer; font-size: .8rem; text-decoration: underline; margin-bottom: 1rem; }
         @media (prefers-color-scheme: light) {
             body { color: #222; background: #fff; }
             h1 { color: #000; }
@@ -31,29 +30,28 @@
 <body>
     <h1>Laputa Mirror Auth</h1>
 
-    <section id="section-signin" class="active">
+    <section id="section-signin">
         <div class="row">
             <button class="btn" id="signin-btn" style="width: 100%">Sign in with Passkey</button>
         </div>
         <div class="msg" id="signin-msg"></div>
         <div style="margin-top: 1rem; text-align: center;">
-            <button id="back-btn" style="display: none;">&larr; Back to sign in</button>
             <a href="#" id="go-register" style="font-size: .8rem; color: #888;">No passkey? Register one</a>
         </div>
     </section>
 
-    <section id="section-register">
+    <section id="section-register" hidden>
         <div class="row">
             <input type="text" id="username-input" placeholder="Username">
             <button class="btn" id="register-btn">Register</button>
         </div>
         <div class="msg" id="register-msg"></div>
         <div style="margin-top: 1rem; text-align: center;">
-            <button id="back-btn" style="display: block; margin: 0 auto;">&larr; Back to sign in</button>
+            <button id="back-btn">&larr; Back to sign in</button>
         </div>
     </section>
 
-    <section id="section-token">
+    <section id="section-token" hidden>
         <div class="msg" style="color: #a3e635; margin-bottom: .4rem;">Token created. Store it securely.</div>
         <div class="token-box" id="token-value"></div>
         <button class="copy-btn" id="copy-btn">Copy</button>
@@ -63,12 +61,5 @@
     </section>
 
     <script src="/static/js/auth.js"></script>
-    <script>
-        document.getElementById('go-register').addEventListener('click', (e) => {
-            e.preventDefault();
-            document.getElementById('section-signin').classList.remove('active');
-            document.getElementById('section-register').classList.add('active');
-        });
-    </script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-import { api, button, el, input, setMsg, show, wireCopy } from "./common.ts";
+import { api, button, el, input, setMsg, wireCopy } from "./common.ts";
 
 // Server-sent WebAuthn options: the W3C option dictionaries with every
 // binary field base64url-encoded as a string.
@@ -57,10 +57,13 @@ const asPublicKeyCredential = (c: Credential | null) => {
     return c;
 };
 
+// Exactly one of the page's sections is visible at a time.
+function showSection(id: "section-signin" | "section-register" | "section-token") {
+    for (const section of document.querySelectorAll("section")) section.hidden = section.id !== id;
+}
+
 function showToken(token: string) {
-    show("section-signin", "none");
-    show("section-register", "none");
-    show("section-token", "block");
+    showSection("section-token");
     el("token-value").textContent = token;
 }
 
@@ -110,8 +113,7 @@ el("signin-btn").addEventListener("click", async () => {
     );
     // 404 means no passkey is registered yet: offer registration instead.
     if (failed?.status === 404) {
-        show("section-signin", "none");
-        show("section-register", "block");
+        showSection("section-register");
     }
 });
 
@@ -125,9 +127,11 @@ el("register-btn").addEventListener("click", async () => {
     );
 });
 
-el("back-btn").addEventListener("click", () => {
-    show("section-register", "none");
-    show("section-signin", "block");
+el("go-register").addEventListener("click", (e) => {
+    e.preventDefault();
+    showSection("section-register");
 });
+
+el("back-btn").addEventListener("click", () => showSection("section-signin"));
 
 wireCopy("copy-btn", "token-value");

@@ -1,4 +1,4 @@
-import { api, button, el, input, select, setMsg, show, wireCopy } from "./common.ts";
+import { api, button, el, input, select, setMsg, setHidden, wireCopy } from "./common.ts";
 
 el("create-btn").addEventListener("click", async () => {
     const name = input("name-input").value.trim();
@@ -14,9 +14,9 @@ el("create-btn").addEventListener("click", async () => {
     btn.disabled = false;
     if (!ok || !data.token) return setMsg("create-msg", data.error || "Error", true);
 
-    show("create-section", "none");
+    setHidden("create-section", true);
     el("new-token-value").textContent = data.token;
-    show("new-token-section", "block");
+    setHidden("new-token-section", false);
 });
 
 wireCopy("copy-btn", "new-token-value");

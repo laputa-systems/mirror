@@ -15,8 +15,8 @@ export function setMsg(id: string, text: string, isErr = false) {
     e.className = "msg" + (isErr ? " err" : "");
 }
 
-export function show(id: string, display: "block" | "none") {
-    el(id).style.display = display;
+export function setHidden(id: string, hidden: boolean) {
+    el(id).hidden = hidden;
 }
 
 // Error bodies are `{ "error": string }`; the success shape `T` is the caller's

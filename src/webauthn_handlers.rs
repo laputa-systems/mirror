@@ -462,7 +462,7 @@ pub fn settings_page(headers: &HashMap<String, String>, state: &AppState) -> Res
           </div>\
           <div class=msg id=create-msg></div>\
         </div>\
-        <div id=new-token-section style=display:none>\
+        <div id=new-token-section hidden>\
           <div class=msg style=\"color:#a3e635;margin-bottom:.4rem\">Token created \u{2014} shown once, store it securely.</div>\
           <div class=token-box id=new-token-value></div>\
           <button class=copy-btn id=copy-btn>Copy</button>\
