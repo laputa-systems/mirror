@@ -43,7 +43,7 @@ sudo apt-get update
 sudo apt-get install -y build-essential curl pkg-config unzip dpkg-dev docker.io
 ```
 
-Install [Deno](https://deno.com) for the frontend build (`curl -fsSL https://deno.land/install.sh | sh`).
+Install [Deno](https://deno.com) and [Node.js](https://nodejs.org/) for the frontend build. `make build-frontend` uses Deno to install the pinned pnpm CLI, then uses pnpm to install frontend dependencies and build the assets. The pnpm executable is stored under `target/pnpm`; Deno caches its package globally.
 
 Install Rust with rustup if it is not already present:
 

@@ -1,10 +1,12 @@
 PREFIX ?= /usr
 DEB_ARCH ?= amd64
 
-.PHONY: all build build-frontend demo build-x86_64-musl deb deploy clean
+.PHONY: all build build-frontend install-pnpm demo build-x86_64-musl deb deploy clean
 
 DEPLOY_HOST ?= oracle
 DEB_NAME ?= laputa-mirror_0.1.0_$(DEB_ARCH).deb
+PNPM_VERSION ?= 11.0.2
+PNPM_ROOT ?= target/pnpm
 
 all: build build-frontend
 
@@ -18,9 +20,12 @@ build-x86_64-musl:
 	  --output type=local,dest=target/docker-output \
 	  .
 
-build-frontend:
-	deno install --frozen
-	deno task build
+install-pnpm:
+	deno install --global --allow-all --unsafe-proto --root "$(PNPM_ROOT)" --name pnpm npm:pnpm@$(PNPM_VERSION)
+
+build-frontend: install-pnpm
+	"$(PNPM_ROOT)/bin/pnpm" install --frozen-lockfile
+	"$(PNPM_ROOT)/bin/pnpm" run build
 
 # Interactive passkey walkthrough on http://localhost:3000; see examples/demo.rs.
 demo: build-frontend
@@ -68,5 +73,6 @@ deploy: deb
 
 clean:
 	rm -rf node_modules
+	rm -rf target/pnpm
 	rm -f static/js/auth.js static/js/settings.js
 	rm -rf target/deb-root target/docker-output
