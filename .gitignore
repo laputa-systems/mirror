@@ -1,3 +1,4 @@
 node_modules
 target
 *.deb
+static/js/*.js

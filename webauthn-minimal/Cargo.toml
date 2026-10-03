@@ -19,3 +19,7 @@ ts = ["dep:ts-rs"]
 tiny_http = "0.12"
 uuid = { version = "1", features = ["v4"] }
 ts-rs = "12"
+
+[[example]]
+name = "gen-types"
+required-features = ["ts"]

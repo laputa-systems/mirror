@@ -5,7 +5,7 @@ use webauthn_minimal::*;
 
 fn main() {
     let output_path =
-        std::env::var("TS_OUTPUT_PATH").unwrap_or_else(|_| "examples/demo/ts/types.ts".to_string());
+        std::env::var("TS_OUTPUT_PATH").unwrap_or_else(|_| "webauthn-minimal/ts/index.ts".to_string());
     let mut output = File::create(&output_path).expect("failed to create types file");
     let cfg = Config::default();
 

@@ -24,13 +24,9 @@ The crate centers around the `RelyingParty` struct, which manages the configurat
 - **`StoredCredential`**: The data structure used to persist a user's public key, credential ID, AAGUID, and signature counter.
 - **Challenge State (`RegChallenge`, `AuthChallenge`)**: Minimal state objects designed to be stored in a session or database between the "start" and "finish" phases of a ceremony.
 
-### Demo Frontend Architecture
+### TypeScript Types
 
-The `examples/demo` provides a reference implementation using a modern frontend stack:
-- **Framework**: Preact (TSX) for a declarative, type-safe UI.
-- **Bundler**: esbuild for fast transpilation and minification.
-- **Type Sync**: Types are automatically generated from Rust structs using `ts-rs` (via `make types`), ensuring the frontend and backend stay in sync.
-- **Deployment**: The Rust server embeds the compiled JS and CSS assets using `include_str!`, allowing the demo to be distributed as a single binary.
+Browser-facing request/response types are generated from the Rust structs with `ts-rs` (feature `ts`) into `ts/index.ts` by `deno task types` at the workspace root. The mirror's frontend imports them as `@webauthn-minimal/types`.
 
 ### Registration Flow
 

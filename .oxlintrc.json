@@ -1,0 +1,9 @@
+{
+  "categories": { "correctness": "error", "suspicious": "error" },
+  "rules": {
+    // `api<T>` and `runCeremony<O>` take the endpoint's response shape from the caller,
+    // since there is no runtime schema layer; the return-only generic is deliberate.
+    "typescript/no-unnecessary-type-parameters": "off"
+  },
+  "ignorePatterns": ["target", "node_modules", "static/js/*.js"]
+}

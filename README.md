@@ -40,8 +40,10 @@ On the machine where you build the `.deb`:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y build-essential curl pkg-config nodejs npm dpkg-dev docker.io
+sudo apt-get install -y build-essential curl pkg-config unzip dpkg-dev docker.io
 ```
+
+Install [Deno](https://deno.com) for the frontend build (`curl -fsSL https://deno.land/install.sh | sh`).
 
 Install Rust with rustup if it is not already present:
 

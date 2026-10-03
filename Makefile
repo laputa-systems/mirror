@@ -19,8 +19,8 @@ build-x86_64-musl:
 	  .
 
 build-frontend:
-	npm install
-	npx esbuild static/js/auth.ts static/js/settings.ts --bundle --outdir=static/js --platform=browser --target=es2020
+	deno install --frozen
+	deno task build
 
 deb: build-x86_64-musl build-frontend
 	rm -rf target/deb-root

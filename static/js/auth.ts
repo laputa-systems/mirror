@@ -1,138 +1,125 @@
-import { 
-    PublicKeyCredentialCreationOptions, 
-    PublicKeyCredentialRequestOptions 
+import type {
+    PublicKeyCredentialCreationOptions as CreationOptionsJson,
+    PublicKeyCredentialRequestOptions as RequestOptionsJson,
 } from "@webauthn-minimal/types";
+import { api, button, el, input, setMsg, show, wireCopy } from "./common.ts";
 
-const toB64url = (buf: ArrayBuffer) => {
-    const bytes = new Uint8Array(buf);
-    return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-};
+type OptionsResponse<O> = { session_id: string; options: O };
+type TokenResponse = { token: string };
+
+// Base64url helpers use btoa/atob: Uint8Array.toBase64/fromBase64 are too new for our browser baseline.
+const toB64url = (buf: ArrayBuffer) =>
+    btoa(String.fromCharCode(...new Uint8Array(buf)))
+        .replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 
 const fromB64url = (s: string) => {
-    const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/").padEnd(s.length + (4 - s.length % 4) % 4, "="));
-    return Uint8Array.from(bin, c => c.charCodeAt(0)).buffer;
+    const b64 = s.replaceAll("-", "+").replaceAll("_", "/");
+    return Uint8Array.from(atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, "=")), (c) => c.charCodeAt(0));
 };
 
-const decodeOptions = (opt: any) => ({
-    ...opt,
-    challenge: fromB64url(opt.challenge),
-    user: opt.user ? { ...opt.user, id: fromB64url(opt.user.id) } : undefined,
-    excludeCredentials: (opt.excludeCredentials || []).map((c: any) => ({ ...c, id: fromB64url(c.id) })),
-    allowCredentials: (opt.allowCredentials || []).map((c: any) => ({ ...c, id: fromB64url(c.id) })),
+const decodeCreation = (o: CreationOptionsJson): PublicKeyCredentialCreationOptions => ({
+    ...o,
+    challenge: fromB64url(o.challenge),
+    user: { ...o.user, id: fromB64url(o.user.id) },
 });
 
-const encodeCred = (cred: PublicKeyCredential) => ({
-    id: cred.id,
-    rawId: toB64url(cred.rawId),
-    type: cred.type,
-    response: {
-        attestationObject: cred.response.attestationObject ? toB64url(cred.response.attestationObject) : null,
-        authenticatorData: cred.response.authenticatorData ? toB64url(cred.response.authenticatorData) : null,
-        clientDataJSON: toB64url(cred.response.clientDataJSON),
-        signature: cred.response.signature ? toB64url(cred.response.signature) : null,
-    },
+const decodeRequest = (o: RequestOptionsJson): PublicKeyCredentialRequestOptions => ({
+    ...o,
+    challenge: fromB64url(o.challenge),
+    allowCredentials: o.allowCredentials.map((c) => ({ ...c, id: fromB64url(c.id) })),
 });
 
-const ui = {
-    setMsg: (id: string, text: string, isErr = false) => {
-        const el = document.getElementById(id)!;
-        el.textContent = text;
-        el.className = "msg" + (isErr ? " err" : "");
-    },
-    setDisabled: (id: string, v: boolean) => {
-        (document.getElementById(id) as HTMLButtonElement).disabled = v;
-    },
-    showToken: (token: string) => {
-        document.getElementById("section-signin")!.style.display = "none";
-        document.getElementById("section-register")!.style.display = "none";
-        document.getElementById("section-token")!.style.display = "block";
-        document.getElementById("token-value")!.textContent = token;
-    },
+const encodeCredential = (cred: PublicKeyCredential) => {
+    const r = cred.response;
+    return {
+        id: cred.id,
+        rawId: toB64url(cred.rawId),
+        type: cred.type,
+        response: {
+            attestationObject: r instanceof AuthenticatorAttestationResponse ? toB64url(r.attestationObject) : null,
+            authenticatorData: r instanceof AuthenticatorAssertionResponse ? toB64url(r.authenticatorData) : null,
+            clientDataJSON: toB64url(r.clientDataJSON),
+            signature: r instanceof AuthenticatorAssertionResponse ? toB64url(r.signature) : null,
+        },
+    };
 };
 
-async function api(url: string, body: any = {}) {
-    const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-    });
-    const data = await res.json().catch(() => ({}));
-    return { ok: res.ok, status: res.status, data };
+const asPublicKeyCredential = (c: Credential | null) => {
+    if (!(c instanceof PublicKeyCredential)) throw new Error("No passkey returned");
+    return c;
+};
+
+function showToken(token: string) {
+    show("section-signin", "none");
+    show("section-register", "none");
+    show("section-token", "block");
+    el("token-value").textContent = token;
 }
 
-async function doAuthenticate() {
-    ui.setMsg("signin-msg", "Requesting...", false);
-    ui.setDisabled("signin-btn", true);
+// Runs one WebAuthn ceremony against `/auth/<kind>/{options,verify}`.
+// `ceremony` is the browser call; the server session ties the two requests together.
+async function runCeremony<O>(
+    kind: "register" | "authenticate",
+    msgId: string,
+    btnId: string,
+    optionsBody: object,
+    ceremony: (options: O) => Promise<Credential | null>,
+    failure: string,
+): Promise<{ status: number } | undefined> {
+    const submit = button(btnId);
+    setMsg(msgId, "Requesting...");
+    submit.disabled = true;
 
-    const { ok, status, data } = await api("/auth/authenticate/options");
-    if (!ok) {
-        if (status === 404) {
-            document.getElementById("section-signin")!.style.display = "none";
-            document.getElementById("section-register")!.style.display = "block";
-        } else {
-            ui.setMsg("signin-msg", data.error || "Error", true);
-        }
-        ui.setDisabled("signin-btn", false);
-        return;
+    const opts = await api<OptionsResponse<O>>(`/auth/${kind}/options`, optionsBody);
+    if (!opts.ok || !opts.data.options) {
+        submit.disabled = false;
+        if (opts.status !== 404) setMsg(msgId, opts.data.error || "Error", true);
+        return { status: opts.status };
     }
 
     try {
-        ui.setMsg("signin-msg", "Waiting for passkey...", false);
-        const cred = await navigator.credentials.get({ publicKey: decodeOptions(data.options) });
-        ui.setMsg("signin-msg", "Verifying...", false);
-        const { ok: vOk, data: vData } = await api("/auth/authenticate/verify", { 
-            session_id: data.session_id, 
-            credential: encodeCred(cred) 
+        setMsg(msgId, "Waiting for passkey...");
+        const cred = asPublicKeyCredential(await ceremony(opts.data.options));
+        setMsg(msgId, "Verifying...");
+        const verified = await api<TokenResponse>(`/auth/${kind}/verify`, {
+            session_id: opts.data.session_id,
+            credential: encodeCredential(cred),
         });
-        if (!vOk) throw new Error(vData.error || "Verification failed");
-        ui.showToken(vData.token);
-    } catch (e: any) {
-        ui.setMsg("signin-msg", e.message || String(e), true);
-        ui.setDisabled("signin-btn", false);
+        if (!verified.ok || !verified.data.token) throw new Error(verified.data.error || failure);
+        showToken(verified.data.token);
+    } catch (e) {
+        setMsg(msgId, e instanceof Error ? e.message : String(e), true);
+        submit.disabled = false;
     }
+    return undefined;
 }
 
-async function doRegister() {
-    const username = (document.getElementById("username-input") as HTMLInputElement).value.trim();
-    if (!username) return ui.setMsg("register-msg", "Enter username", true);
-
-    ui.setMsg("register-msg", "Requesting...", false);
-    ui.setDisabled("register-btn", true);
-
-    const { ok, status, data } = await api("/auth/register/options", { username });
-    if (!ok) {
-        ui.setMsg("register-msg", data.error || "Error", true);
-        ui.setDisabled("register-btn", false);
-        return;
-    }
-
-    try {
-        ui.setMsg("register-msg", "Waiting for passkey...", false);
-        const cred = await navigator.credentials.create({ publicKey: decodeOptions(data.options) });
-        ui.setMsg("register-msg", "Verifying...", false);
-        const { ok: vOk, data: vData } = await api("/auth/register/verify", { 
-            session_id: data.session_id, 
-            credential: encodeCred(cred) 
-        });
-        if (!vOk) throw new Error(vData.error || "Registration failed");
-        ui.showToken(vData.token);
-    } catch (e: any) {
-        ui.setMsg("register-msg", e.message || String(e), true);
-        ui.setDisabled("register-btn", false);
-    }
-}
-
-document.getElementById("signin-btn")!.addEventListener("click", doAuthenticate);
-document.getElementById("register-btn")!.addEventListener("click", doRegister);
-document.getElementById("back-btn")!.addEventListener("click", () => {
-    document.getElementById("section-register")!.style.display = "none";
-    document.getElementById("section-signin")!.style.display = "block";
-});
-document.getElementById("copy-btn")!.addEventListener("click", async () => {
-    const token = document.getElementById("token-value")!.textContent;
-    if (token) {
-        await navigator.clipboard.writeText(token).catch(() => {});
-        document.getElementById("copy-btn")!.textContent = "Copied!";
-        setTimeout(() => { document.getElementById("copy-btn")!.textContent = "Copy"; }, 2000);
+el("signin-btn").addEventListener("click", async () => {
+    const failed = await runCeremony<RequestOptionsJson>(
+        "authenticate", "signin-msg", "signin-btn", {},
+        (o) => navigator.credentials.get({ publicKey: decodeRequest(o) }),
+        "Verification failed",
+    );
+    // 404 means no passkey is registered yet: offer registration instead.
+    if (failed?.status === 404) {
+        show("section-signin", "none");
+        show("section-register", "block");
     }
 });
+
+el("register-btn").addEventListener("click", async () => {
+    const username = input("username-input").value.trim();
+    if (!username) return setMsg("register-msg", "Enter username", true);
+    await runCeremony<CreationOptionsJson>(
+        "register", "register-msg", "register-btn", { username },
+        (o) => navigator.credentials.create({ publicKey: decodeCreation(o) }),
+        "Registration failed",
+    );
+});
+
+el("back-btn").addEventListener("click", () => {
+    show("section-register", "none");
+    show("section-signin", "block");
+});
+
+wireCopy("copy-btn", "token-value");

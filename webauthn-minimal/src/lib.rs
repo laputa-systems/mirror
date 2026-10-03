@@ -68,6 +68,7 @@ pub struct UserInfo {
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct PubKeyCredParam {
     #[serde(rename = "type")]
+    #[cfg_attr(feature = "ts", ts(type = "\"public-key\""))]
     pub cred_type: String,
     pub alg: i32,
 }
@@ -77,8 +78,10 @@ pub struct PubKeyCredParam {
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct AuthenticatorSelection {
+    #[cfg_attr(feature = "ts", ts(type = "ResidentKeyRequirement"))]
     pub resident_key: String,
     pub require_resident_key: bool,
+    #[cfg_attr(feature = "ts", ts(type = "UserVerificationRequirement"))]
     pub user_verification: String,
 }
 
@@ -93,6 +96,7 @@ pub struct PublicKeyCredentialCreationOptions {
     pub pub_key_cred_params: Vec<PubKeyCredParam>,
     pub timeout: u32,
     pub authenticator_selection: AuthenticatorSelection,
+    #[cfg_attr(feature = "ts", ts(type = "AttestationConveyancePreference"))]
     pub attestation: String,
 }
 
@@ -101,6 +105,7 @@ pub struct PublicKeyCredentialCreationOptions {
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct AllowCredential {
     #[serde(rename = "type")]
+    #[cfg_attr(feature = "ts", ts(type = "\"public-key\""))]
     pub cred_type: String,
     pub id: String,
 }
@@ -114,6 +119,7 @@ pub struct PublicKeyCredentialRequestOptions {
     pub timeout: u32,
     pub rp_id: String,
     pub allow_credentials: Vec<AllowCredential>,
+    #[cfg_attr(feature = "ts", ts(type = "UserVerificationRequirement"))]
     pub user_verification: String,
 }
 
@@ -125,6 +131,7 @@ pub struct RegistrationResponse {
     pub id: String,
     pub raw_id: String,
     #[serde(rename = "type")]
+    #[cfg_attr(feature = "ts", ts(type = "\"public-key\""))]
     pub cred_type: String,
     pub response: RegistrationResponseData,
 }
@@ -147,6 +154,7 @@ pub struct AuthenticationResponse {
     pub id: String,
     pub raw_id: String,
     #[serde(rename = "type")]
+    #[cfg_attr(feature = "ts", ts(type = "\"public-key\""))]
     pub cred_type: String,
     pub response: AuthenticationResponseData,
 }
